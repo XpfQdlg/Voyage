@@ -21,7 +21,7 @@
 | 模式 | 触发 | 效果 |
 |---|---|---|
 | 被动 | 自动（接 hook 后） | 输入严重时才提示，不打断你 |
-| 主动 | 你调用 | 查看输入的分词、坏习惯、量化代价 |
+| 主动 | 你调用 | 分析**当前这条输入**的分词、坏习惯、量化代价；跨对话趋势看 `history.py` 周报 |
 
 ## 环境要求
 
@@ -31,14 +31,14 @@
 ## 快速开始（命令行，30 秒）
 
 ```bash
-echo "你的输入" | python scripts/analyze.py --format text
+echo "你的输入" | python scripts/analyze.py --clean --format text
 ```
 
 ```bash
-python scripts/analyze.py --text "你好，请帮我看看这个报错" --format text
+python scripts/analyze.py --text "你好，请帮我看看这个报错" --clean --format text
 ```
 
-输出：token 数、预计成本、检测到的习惯、建议。
+输出：所用模型与单价、token 数、预计成本、检测到的习惯、建议。`--clean` 剥离系统注入（权限警告/命令消息/任务通知），只分析你的真实输入。
 
 ## 在各平台使用
 
@@ -92,19 +92,21 @@ python scripts/history.py
 
 ### 定价（models.json）
 
-单位：每 1,000,000 token 的货币数。修改 `models.json` 里的 `input_per_million` 和 `output_per_million`。
+单位：每 1,000,000 token 的货币数。`models.json` 已预置常见 Claude 模型（fable-5 / opus-5 / sonnet-5 / haiku-4-5），按模型自动计费：
 
 ```json
 {
-  "default": {
-    "input_per_million": 3.0,
-    "output_per_million": 15.0,
-    "currency": "USD"
-  }
+  "claude-fable-5": { "input_per_million": 10.0, "output_per_million": 50.0, "currency": "USD" },
+  "claude-opus-5":   { "input_per_million": 5.0,  "output_per_million": 25.0, "currency": "USD" },
+  "claude-sonnet-5": { "input_per_million": 3.0,  "output_per_million": 15.0, "currency": "USD" },
+  "claude-haiku-4-5":{ "input_per_million": 1.0,  "output_per_million": 5.0,  "currency": "USD" },
+  "default":         { "input_per_million": 3.0,  "output_per_million": 15.0, "currency": "USD" }
 }
 ```
 
-也可用环境变量覆盖：
+**自动定价**：缺省按 `ANTHROPIC_MODEL` → `CLAUDE_MODEL` → `~/.claude/settings.json` 的 `model` 探测当前模型，匹配价格表；未识别回退 `default`。也可用 `--model` 手动指定。
+
+价格会随官方调整，改文件里的数值即可。也可用环境变量整体覆盖：
 
 ```bash
 export PROMPT_HABITS_MODELS='{"default":{"input_per_million":2,"output_per_million":10,"currency":"CNY"}}'

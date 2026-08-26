@@ -31,7 +31,7 @@ for _stream in (sys.stdout, sys.stderr):
 if sys.stdin and hasattr(sys.stdin, "reconfigure"):
     sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 
-from core import analyze_text, load_models, SEV_HIGH
+from core import analyze_text, detect_model, load_models, strip_system_noise, SEV_HIGH
 from store import record_check
 
 
@@ -41,11 +41,11 @@ def main():
     except Exception:
         sys.exit(0)  # 读不到输入就不打扰用户
 
-    prompt = data.get("prompt", "")
+    prompt = strip_system_noise(data.get("prompt", ""))
     if not prompt.strip():
-        sys.exit(0)
+        sys.exit(0)  # 纯系统注入（权限警告/命令消息/任务通知等）不入库、不提示
 
-    result = analyze_text(prompt, models=load_models())
+    result = analyze_text(prompt, model=detect_model() or "default", models=load_models())
 
     try:
         record_check(result, data, tool="claude_code")

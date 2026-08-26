@@ -61,16 +61,17 @@ waste_cost = waste_tokens × input_per_million / 1,000,000
 
 ### 5. missing_context 上下文/输出格式缺失
 
-- 检测：文本 ≥ 30 字、total < 3000、非日志主导，且不含目标/格式/约束关键词（格式、JSON、列表、要求、约束、用于、步骤 等）
+- 检测：total > 8、非纯跟进句、非单条 URL/路径、文本 ≥ 30 字、total < 3000、非日志主导，且不含目标/格式/约束关键词（格式、JSON、列表、要求、约束、用于、步骤 等）
+- **多轮对话防误报**：`total ≤ 8` 的短句直接跳过；纯确认/跟进句（ok、好、可以、同步、推送、这样吧 等）视为"上一轮已有上下文"，跳过；整条就是一个 URL/本地路径的，跳过
 - 严重度：medium
-- 代价：waste = 300（估算多花 1 轮往返）
+- 代价：waste = min(total, 300)。waste 不超过输入自身，避免多条命中时虚高
 - 建议："开头一句话给目标，结尾指定输出格式（如 JSON/表格/列表），能省 1-2 轮往返。"
 
 ### 6. vague_instruction 指令模糊
 
 - 检测：文本 < 40 字，且命中模糊句式（"帮我改一下""这个有问题""优化一下" 等）
 - 严重度：medium
-- 代价：waste = 300（估算多花 1 轮往返）
+- 代价：waste = min(total, 300)。waste 不超过输入自身
 - 建议："说清动作 + 对象 + 期望结果。例如'把 login.py 的登录逻辑改为 JWT 校验'。"
 
 ## 多命中的处理
@@ -78,6 +79,15 @@ waste_cost = waste_tokens × input_per_million / 1,000,000
 - 全部记录进习惯库
 - 被动提示最多显示前 2 条 high，避免刷屏
 - **规则抑制**：已有具体严重问题（secret_leak / log_paste / oversized_request）时，不再补报泛化的 missing_context，避免噪音
+
+## 系统注入剥离（hook / CLI）
+
+hook 分析前调用 `strip_system_noise()` 剥掉注入的系统内容，避免把非用户输入记入习惯库：
+
+- 逐块剥离：嵌入正文的 XML 块（command/task/system-reminder 标签对）、`Permission allow rule` 行、skill 加载头行
+- 残渣判空：去掉所有 `<标签>` 后只剩空白，说明整条就是系统注入，判空跳过（不入库、不提示）
+- 只剥标签不误伤正文：如 `<task-notification>...</task-notification>` 标签后的真实用户提问会保留
+- CLI 可用 `--clean` 复用同一逻辑
 
 ## 被动提示触发汇总
 
@@ -89,5 +99,5 @@ waste_cost = waste_tokens × input_per_million / 1,000,000
 
 ## 备注
 
-- missing_context 与 vague_instruction 的 waste = 300 是估算值，标注清楚即可
+- missing_context 与 vague_instruction 的 waste = min(total, 300)，代表"若这轮白跑最多浪费这么多"，可叠加但不会超过输入总量
 - 阈值均为 v1 初值，可按实际使用调整

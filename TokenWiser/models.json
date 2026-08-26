@@ -1,8 +1,32 @@
 {
+  "claude-fable-5": {
+    "input_per_million": 10.0,
+    "output_per_million": 50.0,
+    "currency": "USD",
+    "note": "Claude Fable 5。缓存读 $1/M，batch 读 $5/M（2026-08 公开价）"
+  },
+  "claude-opus-5": {
+    "input_per_million": 5.0,
+    "output_per_million": 25.0,
+    "currency": "USD",
+    "note": "Claude Opus 5。缓存读 $0.5/M，batch 读 $2.5/M（2026-08 公开价）"
+  },
+  "claude-sonnet-5": {
+    "input_per_million": 3.0,
+    "output_per_million": 15.0,
+    "currency": "USD",
+    "note": "Claude Sonnet 5 标准价。intro 价 $2/$10 至 2026-08-31 止（2026-08 公开价）"
+  },
+  "claude-haiku-4-5": {
+    "input_per_million": 1.0,
+    "output_per_million": 5.0,
+    "currency": "USD",
+    "note": "Claude Haiku 4.5。缓存读 $0.1/M（2026-08 公开价）"
+  },
   "default": {
     "input_per_million": 3.0,
     "output_per_million": 15.0,
     "currency": "USD",
-    "note": "示例价格（每 1,000,000 token 的货币数）。请按实际使用的模型修改本文件，或设置环境变量 PROMPT_HABITS_MODELS 覆盖。"
+    "note": "默认估算价：未识别模型时使用。可修改本文件，或设环境变量 PROMPT_HABITS_MODELS 覆盖"
   }
 }

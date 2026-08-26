@@ -254,8 +254,45 @@ _CONTEXT_KEYWORDS = [
     "目标", "用途", "用于", "场景", "风格", "示例",
 ]
 
+# 多轮对话中的纯跟进/确认词。命中即认为"上一轮刚给过上下文"，不再苛求格式。
+_CONFIRM_WORDS = {
+    "ok", "好", "好的", "可以", "行", "行吧", "嗯", "嗯嗯", "是的", "没错",
+    "对", "没问题", "同步", "推送", "上传", "继续", "收到", "明白", "了解",
+    "这样", "那样", "就这样",
+}
+_CONFIRM_SUFFIXES = ("吧", "了", "先", "就行")
+# 单条输入就是一个 URL/本地路径：自带明确对象，不算缺上下文。
+_URL_ONLY_RE = re.compile(r"^['\"]?(?:https?://\S+|(?:[A-Za-z]:)?[\\/][^\s'\"<>]+)['\"]?$")
+
+
+def _is_confirm_followup(text):
+    """判断是否为纯确认/跟进句（无新增信息量）。"""
+    words = re.findall(r"[A-Za-z0-9]+|[一-鿿]+", text)
+    if not words:
+        return True
+    core = []
+    for w in words:
+        for suf in _CONFIRM_SUFFIXES:
+            if w.endswith(suf):
+                w = w[: -len(suf)]
+                break
+        if w:
+            core.append(w)
+    return (
+        bool(core)
+        and all(c.lower() in _CONFIRM_WORDS for c in core)
+        and sum(len(c) for c in core) <= 6
+    )
+
 
 def rule_missing_context(text, tokens, total, encoding):
+    # 短句与纯跟进句：多轮对话的自然追问，不是独立请求，跳过
+    if total <= 8:
+        return None
+    if _is_confirm_followup(text):
+        return None
+    if _URL_ONLY_RE.match(text.strip()):
+        return None
     if len(text) < 30:
         return None
     if total >= 3000:
@@ -264,8 +301,11 @@ def rule_missing_context(text, tokens, total, encoding):
         return None
     if any(kw in text for kw in _CONTEXT_KEYWORDS):
         return None
+    # waste = 输入自身的 token 数（缺上下文最坏是白跑这一轮），上限 300。
+    # 不再用固定 300，避免多条命中时 waste 虚高到超过输入总量。
+    waste = min(total, 300)
     return _finding(
-        "missing_context", "上下文/输出格式缺失", SEV_MEDIUM, 300,
+        "missing_context", "上下文/输出格式缺失", SEV_MEDIUM, waste,
         "未提到目标、约束或输出格式",
         "开头一句话给目标，结尾指定输出格式（如 JSON/表格/列表），能省 1-2 轮往返。",
     )
@@ -286,10 +326,39 @@ def rule_vague_instruction(text, tokens, total, encoding):
     if not _VAGUE_RE.search(text):
         return None
     return _finding(
-        "vague_instruction", "指令模糊", SEV_MEDIUM, 300,
+        "vague_instruction", "指令模糊", SEV_MEDIUM, min(total, 300),
         "未说明具体动作/对象/期望",
         "说清动作 + 对象 + 期望结果。例如'把 login.py 的登录逻辑改为 JWT 校验'。",
     )
+
+
+# --- 7. 系统注入噪音剥离 -------------------------------------------------
+
+# 嵌入正文中的 XML 注入块（逐块剥离）
+_SYSTEM_NOISE_PATTERNS = [
+    re.compile(r"<command-message>.*?</command-message>", re.S),
+    re.compile(r"<command-name>.*?</command-name>", re.S),
+    re.compile(r"<task-notification>.*?</task-notification>", re.S),
+    re.compile(r"<system-reminder>.*?</system-reminder>", re.S),
+    re.compile(r"Permission allow rule[^\n]*", re.I),
+    re.compile(r"Base directory for this skill:[^\n]*", re.I),
+]
+
+
+def strip_system_noise(text):
+    """剥离注入的系统内容（权限警告、命令消息、任务通知、skill 加载头）。
+
+    仅处理已知注入结构，不碰用户正文。剥离后为空 → 调用方应跳过本次分析。
+    """
+    if not text:
+        return ""
+    for pat in _SYSTEM_NOISE_PATTERNS:
+        text = pat.sub("", text)
+    # 去掉所有 <标签> 后若只剩空白，说明整条就是系统注入标签壳，判空
+    residue = re.sub(r"<[^>]+>", "", text).strip()
+    if not residue:
+        return ""
+    return text.strip()
 
 
 _RULES = [
@@ -379,8 +448,38 @@ def load_models(path=None):
     return models
 
 
+def detect_model():
+    """探测当前使用的模型名。优先级：ANTHROPIC_MODEL > CLAUDE_MODEL > settings.json。
+
+    匹配不到返回 None（调用方回退 default）。Claude Code 的模型名一般带日期后缀
+    （如 claude-haiku-4-5-20251001），前缀匹配由 _price_for 处理。
+    """
+    for env in ("ANTHROPIC_MODEL", "CLAUDE_MODEL"):
+        m = os.environ.get(env)
+        if m:
+            return m
+    for path in (
+        os.path.expanduser("~/.claude/settings.json"),
+        os.path.expanduser("~/.claude/settings.local.json"),
+    ):
+        try:
+            with open(path, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            continue
+        m = cfg.get("model")
+        if m:
+            return m
+    return None
+
+
 def _price_for(model, models):
-    """取某模型的定价；未知模型回退到 default。"""
+    """取某模型的定价；未知模型回退到 default。支持前缀匹配（模型 id 带日期后缀）。"""
     if not models:
         models = load_models()
-    return models.get(model) or models.get("default", DEFAULT_MODELS["default"])
+    if model in models:
+        return models[model]
+    for key, val in models.items():
+        if key != "default" and model and model.startswith(key):
+            return val
+    return models.get("default", DEFAULT_MODELS["default"])
