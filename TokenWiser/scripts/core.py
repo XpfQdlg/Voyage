@@ -193,9 +193,11 @@ def rule_secret_leak(text, tokens, total, encoding):
     for pat, label in _SECRET_PATTERNS:
         if pat.search(text):
             hits.append(label)
-    # 高熵片段：长且信息熵高，可能是随机生成的密钥
+    # 高熵片段：长且信息熵高，可能是随机生成的密钥。
+    # 只对不含中文字符的片段检测——中文句子天然高熵，跳过可避免误报。
+    cjk = re.compile(r"[一-鿿　-〿＀-￯]")
     for piece in re.split(r"\s+", text):
-        if len(piece) >= 16 and _entropy(piece) >= 4.5:
+        if len(piece) >= 16 and not cjk.search(piece) and _entropy(piece) >= 4.5:
             hits.append("高熵片段")
             break
     if not hits:
