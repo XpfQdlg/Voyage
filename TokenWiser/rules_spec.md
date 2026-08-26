@@ -54,14 +54,14 @@ waste_cost = waste_tokens × input_per_million / 1,000,000
 
 ### 4. redundant_opener 冗余开场白
 
-- 检测：开头匹配"你是一个AI助手""你好""您好"等模板，且开场白部分 ≥ 10 token
+- 检测：开头匹配"你是一个AI助手""你好""您好"等模板，且开场白部分 ≥ 4 token
 - 严重度：medium
 - 代价：waste = 开场白的 token 数
 - 建议："开场白不提供信息，直接进主题。"
 
 ### 5. missing_context 上下文/输出格式缺失
 
-- 检测：文本 ≥ 60 字，且不含目标/格式/约束关键词（格式、JSON、列表、要求、约束、用于、步骤 等）
+- 检测：文本 ≥ 30 字、total < 3000、非日志主导，且不含目标/格式/约束关键词（格式、JSON、列表、要求、约束、用于、步骤 等）
 - 严重度：medium
 - 代价：waste = 300（估算多花 1 轮往返）
 - 建议："开头一句话给目标，结尾指定输出格式（如 JSON/表格/列表），能省 1-2 轮往返。"
@@ -77,6 +77,7 @@ waste_cost = waste_tokens × input_per_million / 1,000,000
 
 - 全部记录进习惯库
 - 被动提示最多显示前 2 条 high，避免刷屏
+- **规则抑制**：已有具体严重问题（secret_leak / log_paste / oversized_request）时，不再补报泛化的 missing_context，避免噪音
 
 ## 被动提示触发汇总
 

@@ -1,6 +1,12 @@
-# TokenWiser · 输入习惯教练
+# TokenWiser
 
 检测你向 AI 输入中的不良习惯，量化 token 与成本代价，给出建议。只建议，不替换。
+
+## 文档
+
+- [使用说明 USAGE.md](USAGE.md) — 面向用户，跨平台（Claude Code / 其他 agent / 命令行）
+- [检测规则规格 rules_spec.md](rules_spec.md) — 每条规则的检测逻辑与阈值
+- [后续调整清单 ROADMAP.md](ROADMAP.md) — 待办与技术债
 
 ## 它解决什么
 
@@ -28,7 +34,9 @@ python scripts/analyze.py --text "你好，请帮我优化一下这个" --format
 ```
 TokenWiser/
 ├── SKILL.md            # 给任何 agent 的指令（放入 .claude/skills/ 即可用）
+├── USAGE.md            # 使用说明（跨平台）
 ├── rules_spec.md       # 检测规则规格
+├── ROADMAP.md          # 后续调整清单
 ├── models.json         # 定价表（可改）
 └── scripts/
     ├── core.py         # 核心引擎（纯函数，零工具依赖）
