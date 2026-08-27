@@ -2,6 +2,13 @@
 
 状态：⬜ 待做 / 🔧 进行中 / ✅ 完成
 
+## v1.5 已交付（2026-08-27）
+
+- ✅ **落盘加密**：`crypto.py` AES-256-GCM 加密 input_preview/session_id；密钥 `~/.tokenwiser/tw_key`；老库自动迁移（`store.migrate()`）；未装 cryptography 时降级明文
+- ✅ **实时消耗面板**：`server.py` + `dashboard/`（Flask + 本地 echarts），KPI/趋势/习惯分布/最近记录，10s 轮询
+- ✅ **演示数据**：`demo_data.py` 生成近 30 天仿真记录，走真实检测管线
+- ✅ store 增 `model` 列：面板成本按记录当时模型定价计算
+
 ## 一、v1 收尾（近期）
 
 1. ⬜ **同步 rules_spec.md 与代码阈值**
@@ -23,7 +30,7 @@
    - 注入放大成本检测（prompt 被注入导致成本激增）
 5. ⬜ **多 tokenizer 支持**：qwen 等国产模型分词，对比中文分词差异
 6. ⬜ **输出成本估算**、多模型定价表（当前只算输入成本）
-7. ⬜ **主动模式的 UI 化**（可选，本地 Web 页面）
+7. ✅ **主动模式的 UI 化**（2026-08-27 完成：`server.py` 本地实时消耗面板 + `demo_data.py` 演示数据）
 
 ## 三、长期
 

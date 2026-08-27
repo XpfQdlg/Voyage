@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TokenWiser 消耗面板</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171b23;
+    --panel-2: #1d232d;
+    --border: #2a3140;
+    --text: #e6eaf2;
+    --muted: #8b93a5;
+    --accent: #4da3ff;
+    --good: #3ddc97;
+    --warn: #ffb547;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; }
+  .badge {
+    font-size: 12px;
+    color: var(--good);
+    border: 1px solid var(--good);
+    border-radius: 999px;
+    padding: 2px 10px;
+    opacity: .9;
+  }
+  .meta { font-size: 12px; color: var(--muted); margin-left: auto; }
+
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .kpi .label { font-size: 12px; color: var(--muted); }
+  .kpi .value { font-size: 24px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .kpi .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .kpi.waste .value { color: var(--warn); }
+
+  .charts {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .chart-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .chart-box h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--muted); }
+  .chart { width: 100%; height: 300px; }
+
+  .recent { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .recent h2 { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  th.num { text-align: right; }
+  .tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    margin-right: 4px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .tag.high { color: var(--bad); border-color: var(--bad); }
+  .preview { color: var(--muted); font-family: Consolas, monospace; }
+  .empty { color: var(--muted); text-align: center; padding: 24px; }
+
+  @media (max-width: 860px) {
+    .charts { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>TokenWiser 输入消耗面板</h1>
+  <span class="badge">🔒 AES-256-GCM 加密存储</span>
+  <div class="meta">自动刷新 10s · 上次刷新 <span id="last-update">--:--:--</span></div>
+</header>
+
+<section class="kpis" id="kpis"></section>
+
+<section class="charts">
+  <div class="chart-box">
+    <h2>近 30 天输入消耗（柱：token / 线：成本）</h2>
+    <div id="timeline" class="chart"></div>
+  </div>
+  <div class="chart-box">
+    <h2>习惯分布</h2>
+    <div id="habits" class="chart"></div>
+  </div>
+</section>
+
+<section class="recent">
+  <h2>最近记录（输入预览已打码）</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>时间</th><th>来源</th><th>模型</th><th>输入预览</th>
+        <th class="num">总 token</th><th class="num">浪费</th><th class="num">成本</th><th>命中习惯</th>
+      </tr>
+    </thead>
+    <tbody id="recent-body"></tbody>
+  </table>
+</section>
+
+<script src="/static/echarts.min.js"></script>
+<script>window.echarts || document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"><\/script>')</script>
+<script>
+const HABIT_LABEL = {
+  log_paste: "日志粘贴",
+  secret_leak: "敏感信息",
+  oversized_request: "单条过大",
+  redundant_opener: "冗余开场白",
+  missing_context: "缺上下文",
+  vague_instruction: "指令模糊",
+};
+const HABIT_HIGH = ["secret_leak", "log_paste", "oversized_request"];
+
+const fmtInt = (n) => Number(n).toLocaleString("en-US");
+const fmtMoney = (x) => "$" + Number(x).toFixed(4);
+const label = (h) => HABIT_LABEL[h] || h;
+
+let timelineChart = null, habitsChart = null;
+
+function kpiCard(labelText, valueText, sub, waste) {
+  return `<div class="kpi${waste ? " waste" : ""}">
+    <div class="label">${labelText}</div>
+    <div class="value">${valueText}</div>
+    <div class="sub">${sub || ""}</div>
+  </div>`;
+}
+
+function renderSummary(s) {
+  document.getElementById("kpis").innerHTML =
+    kpiCard("今日输入", fmtInt(s.today.tokens), `${s.today.count} 条 / 浪费 ${fmtInt(s.today.waste)}`) +
+    kpiCard("今日成本", fmtMoney(s.today.cost), `浪费 ${fmtMoney(s.today.waste_cost)}`) +
+    kpiCard("本周输入", fmtInt(s.week.tokens), `${s.week.count} 条 / 浪费 ${fmtInt(s.week.waste)}`) +
+    kpiCard("本周成本", fmtMoney(s.week.cost), `浪费 ${fmtMoney(s.week.waste_cost)}`) +
+    kpiCard("累计浪费", fmtInt(s.all.waste), `占总输入 ${s.all.tokens ? (s.all.waste / s.all.tokens * 100).toFixed(1) : 0}%`, true) +
+    kpiCard("累计成本", fmtMoney(s.all.cost), `浪费 ${fmtMoney(s.all.waste_cost)}`);
+}
+
+function renderTimeline(d) {
+  if (!timelineChart) {
+    timelineChart = echarts.init(document.getElementById("timeline"));
+  }
+  timelineChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: { trigger: "axis" },
+    grid: { left: 60, right: 70, top: 20, bottom: 40 },
+    xAxis: {
+      type: "category",
+      data: d.dates,
+      axisLabel: { color: "#8b93a5", fontSize: 11 },
+      axisLine: { lineStyle: { color: "#2a3140" } },
+    },
+    yAxis: [
+      { type: "value", name: "token", nameTextStyle: { color: "#8b93a5" },
+        axisLabel: { color: "#8b93a5", fontSize: 11 },
+        splitLine: { lineStyle: { color: "#1d232d" } } },
+      { type: "value", name: "USD", nameTextStyle: { color: "#8b93a5" },
+        axisLabel: { color: "#8b93a5", fontSize: 11 },
+        splitLine: { show: false } },
+    ],
+    series: [
+      { name: "token", type: "bar", data: d.tokens, itemStyle: { color: "#4da3ff", borderRadius: [2, 2, 0, 0] }, barMaxWidth: 18 },
+      { name: "成本", type: "line", yAxisIndex: 1, data: d.costs, smooth: true,
+        symbol: "none", lineStyle: { color: "#3ddc97", width: 2 }, itemStyle: { color: "#3ddc97" } },
+    ],
+  }, { notMerge: true });
+}
+
+function renderHabits(d) {
+  const data = d.habits.map((h) => ({ name: label(h.habit), value: h.count }));
+  if (!habitsChart) {
+    habitsChart = echarts.init(document.getElementById("habits"));
+  }
+  habitsChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: { trigger: "item", formatter: "{b}: {c} 次 ({d}%)" },
+    legend: { bottom: 0, textStyle: { color: "#8b93a5", fontSize: 11 } },
+    color: ["#4da3ff", "#ff6b6b", "#ffb547", "#3ddc97", "#b78bff", "#4dd6e0"],
+    series: [{
+      type: "pie", radius: ["42%", "68%"], center: ["50%", "44%"],
+      itemStyle: { borderColor: "#171b23", borderWidth: 2 },
+      label: { color: "#e6eaf2", fontSize: 11, formatter: "{b}\n{c}" },
+      data,
+    }],
+  }, { notMerge: true });
+}
+
+function renderRecent(d) {
+  const body = document.getElementById("recent-body");
+  if (!d.recent.length) {
+    body.innerHTML = `<tr><td colspan="8" class="empty">暂无记录。先运行 demo_data.py 造演示数据，或正常使用后由 hook 自动写入。</td></tr>`;
+    return;
+  }
+  body.innerHTML = d.recent.map((r) => {
+    const tags = r.habits.map((h) =>
+      `<span class="tag${HABIT_HIGH.includes(h) ? " high" : ""}">${label(h)}</span>`).join("");
+    return `<tr>
+      <td>${r.ts.replace("T", " ")}</td>
+      <td>${r.tool}</td>
+      <td>${r.model || "-"}</td>
+      <td class="preview">${r.preview}</td>
+      <td class="num">${fmtInt(r.total)}</td>
+      <td class="num">${fmtInt(r.waste)}</td>
+      <td class="num">${fmtMoney(r.cost)}</td>
+      <td>${tags || '<span style="color:#8b93a5">-</span>'}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function refresh() {
+  const now = new Date();
+  document.getElementById("last-update").textContent =
+    now.toTimeString().slice(0, 8);
+  const [s, t, h, r] = await Promise.all([
+    fetch("/api/summary").then((x) => x.json()),
+    fetch("/api/timeline?days=30").then((x) => x.json()),
+    fetch("/api/habits").then((x) => x.json()),
+    fetch("/api/recent?limit=20").then((x) => x.json()),
+  ]);
+  renderSummary(s);
+  renderTimeline(t);
+  renderHabits(h);
+  renderRecent(r);
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

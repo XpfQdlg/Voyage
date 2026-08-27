@@ -82,7 +82,24 @@ python scripts/analyze.py --text "..." --record
 
 # 看习惯周报
 python scripts/history.py
+
+# 实时消耗面板（浏览器打开，每 10 秒自动刷新）
+python scripts/server.py
+
+# 面板内容少时，先生成演示数据（近 30 天约 300 条）
+python scripts/demo_data.py
 ```
+
+### 3.5 实时消耗面板
+
+`python scripts/server.py` 启动本地 Web 面板，默认 `http://127.0.0.1:8000`：
+
+- KPI 卡：今日 / 本周 / 累计的 token 消耗、成本、浪费
+- 近 30 天消耗趋势图（柱：token，线：成本）
+- 习惯分布饼图、最近记录表（输入预览已打码为"前 2 字 + ……"）
+- hook 每次提交写库后，面板在 10 秒内自动更新
+
+依赖 `flask` 与 `cryptography`（本机已装）。只监听 `127.0.0.1`，不上网。
 
 ### 4. 浏览器 AI（规划中）
 
@@ -147,6 +164,11 @@ export PROMPT_HABITS_MODELS='{"default":{"input_per_million":2,"output_per_milli
 - **本地存储**：每次分析记录存本地 SQLite `data/habits.db`
   - 只存输入前 100 字预览 + 检测结果（习惯类型、严重度、浪费 token）
   - 检测到的密钥只记类型（如 "API Key"），不存密钥本身
+- **落盘加密**：输入预览与 session 经 AES-256-GCM 加密后写入，密文格式 `enc:v1:...`
+  - 密钥文件在 `~/.tokenwiser/tw_key`（项目目录之外，`.gitignore` 不会触碰）
+  - 需要 `cryptography`（`pip install cryptography`）。未安装时降级为明文写入
+  - 老库的明文历史在首次运行 `history.py` 或 `server.py` 时自动就地加密（幂等）
+  - **删除 `~/.tokenwiser/tw_key` = 历史数据无法解密**，请勿随意删除
 - **删除数据**：删掉 `data/habits.db` 即清空历史
 - `data/` 已在 `.gitignore` 中，不会进入版本库
 

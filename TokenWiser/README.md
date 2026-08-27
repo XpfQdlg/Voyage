@@ -29,6 +29,21 @@ echo "你的输入" | python scripts/analyze.py --format text
 python scripts/analyze.py --text "你好，请帮我优化一下这个" --format text
 ```
 
+## 实时消耗面板
+
+本地 Web 面板，实时展示 token 消耗、成本、习惯分布，每 10 秒自动刷新：
+
+```bash
+python scripts/server.py
+# 浏览器自动打开 http://127.0.0.1:8000
+```
+
+面板数据来自本地 `data/habits.db`。首次展示内容少时，可先生成演示数据：
+
+```bash
+python scripts/demo_data.py          # 生成近 30 天约 300 条演示记录
+```
+
 ## 目录结构
 
 ```
@@ -43,7 +58,11 @@ TokenWiser/
     ├── analyze.py      # 便携命令行入口（stdin/--text → JSON）
     ├── hook.py         # Claude Code hook 适配器（自动触发）
     ├── history.py      # 输入习惯周报
-    └── store.py        # SQLite 习惯库
+    ├── store.py        # SQLite 习惯库
+    ├── crypto.py       # 敏感字段 AES-256-GCM 加密（密钥在项目外 ~/.tokenwiser/）
+    ├── server.py       # 本地实时消耗面板（Flask）
+    ├── demo_data.py    # 演示数据生成器
+    └── dashboard/      # 面板前端（index.html + 本地 echarts）
 ```
 
 ## 安装为 Claude Code skill
@@ -51,6 +70,14 @@ TokenWiser/
 将 `TokenWiser/` 目录放入 `~/.claude/skills/`（或项目 `.claude/skills/`）。
 需要自动触发时，把 `scripts/hook.py` 配为 UserPromptSubmit hook。
 
+## 隐私
+
+- 分析全部本地完成，零上传
+- 输入预览（前 100 字）与 session 落盘前经 **AES-256-GCM 加密**，密钥存 `~/.tokenwiser/tw_key`（项目目录之外）
+- 删除密钥 = 历史数据无法解密，请勿随意删除
+
 ## 可选依赖
 
 - tiktoken：精确 token 分割（`pip install tiktoken`）。不装也能跑，用字符估算。
+- cryptography：敏感字段加密（`pip install cryptography`）。已安装时自动启用，未安装时降级为明文写入。
+- flask：实时消耗面板（`pip install flask`）。

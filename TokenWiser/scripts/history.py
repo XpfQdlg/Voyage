@@ -21,7 +21,7 @@ for _stream in (sys.stdout, sys.stderr):
     if _stream and hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-from store import fetch_checks
+from store import fetch_checks, migrate
 
 
 def main():
@@ -29,6 +29,7 @@ def main():
     ap.add_argument("--weeks", type=int, default=4, help="显示最近几周")
     args = ap.parse_args()
 
+    migrate()  # 首次升级时把历史明文行就地加密
     rows = fetch_checks()
     if not rows:
         print("习惯库暂无记录。先运行 analyze.py --record，或安装 hook 后使用。")
