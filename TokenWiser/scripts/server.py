@@ -17,6 +17,7 @@ API:
 import argparse
 import datetime
 import json
+import math
 import os
 import sys
 from collections import defaultdict
@@ -31,7 +32,7 @@ for _stream in (sys.stdout, sys.stderr):
 from flask import Flask, jsonify, request, send_from_directory
 
 import crypto
-from core import _price_for, load_models
+from core import _is_peak_time, cost_rmb, effective_price, load_models
 from store import fetch_records, migrate
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -43,10 +44,12 @@ app = Flask(__name__, static_folder=None)
 models = load_models()
 
 
-def _cost(tokens, model):
-    """按记录当时使用的模型算输入成本（USD）。"""
-    price = _price_for(model, models)
-    return tokens * price["input_per_million"] / 1_000_000
+def _cost(tokens, model, at=None):
+    """按记录当时的模型与时刻算输入成本（人民币）。
+
+    峰谷模型（如 DeepSeek）按 at 记录时刻判断高峰/低谷取价；CNY 模型不再乘汇率。
+    """
+    return cost_rmb(tokens, effective_price(model, models, at=at), models)
 
 
 def _records():
@@ -55,14 +58,21 @@ def _records():
 
 
 def _mask_preview(enc_preview):
-    """把密文预览打码成'前 2 字 + ……'。明文只在服务端出现，不出网。"""
+    """把密文预览打码成'前 30%（至少 10 字）'。明文只在服务端出现，不出网。
+
+    变长显示：短输入能看到大半，长输入按比例截取加'……'，方便对上哪条对话。
+    超过存储上限（store._PREVIEW_CHARS）的记录显示已存部分的 30%。
+    """
     if not enc_preview or not crypto.is_encrypted(enc_preview):
         return "……"
     try:
         plain = crypto.decrypt_value(enc_preview)
     except Exception:
         return "（密钥不符，无法解密）"
-    return plain[:2] + "……" if len(plain) > 2 else plain
+    show = max(10, math.ceil(len(plain) * 0.3))
+    if len(plain) <= show:
+        return plain
+    return plain[:show] + "……"
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +109,8 @@ def api_summary():
     for rec in rows:
         _rid, ts, _tool, _sid, _prev, total, waste, _findings, model = rec
         d = ts[:10]
-        cost = _cost(total, model)
-        waste_cost = _cost(waste, model)
+        cost = _cost(total, model, at=ts)
+        waste_cost = _cost(waste, model, at=ts)
         agg["all"]["count"] += 1
         agg["all"]["tokens"] += total
         agg["all"]["cost"] += cost
@@ -123,6 +133,7 @@ def api_summary():
     for scope in agg.values():
         scope["cost"] = round(scope["cost"], 6)
         scope["waste_cost"] = round(scope["waste_cost"], 6)
+    agg["peak"] = _is_peak_time()  # 当前是否为 DeepSeek 高峰时段（北京时间）
     return jsonify(agg)
 
 
@@ -136,7 +147,7 @@ def api_timeline():
         _rid, ts, _tool, _sid, _prev, total, waste, _findings, model = rec
         key = ts[:10]
         per_day[key]["tokens"] += total
-        per_day[key]["cost"] += _cost(total, model)
+        per_day[key]["cost"] += _cost(total, model, at=ts)
         per_day[key]["waste"] += waste
 
     start = datetime.date.today() - datetime.timedelta(days=days - 1)
@@ -173,27 +184,57 @@ def api_habits():
 
 @app.route("/api/recent")
 def api_recent():
-    limit = request.args.get("limit", 20, type=int)
+    """最近记录，按会话（session_id）分组返回。
+
+    同一会话的多条输入归一组，带会话编号、条数、时间范围、session 短标识，
+    便于定位'哪一次对话'。session_id 为空（CLI/演示单条）的记录各自成组。
+    limit 表示返回几组（按最新记录倒序），默认 12 组。
+    """
+    limit = request.args.get("limit", 12, type=int)
     limit = max(1, min(limit, 100))
     rows = _records()
-    out = []
-    for rec in reversed(rows[-limit:]):
-        _rid, ts, tool, _sid, prev, total, waste, findings_json, model = rec
+
+    groups_map = {}
+    order = []
+    for rec in rows:
+        rid, ts, tool, enc_sid, prev, total, waste, findings_json, model = rec
         try:
             findings = json.loads(findings_json or "[]")
         except Exception:
             findings = []
-        out.append({
+        plain_sid = ""
+        if enc_sid and crypto.is_encrypted(enc_sid):
+            try:
+                plain_sid = crypto.decrypt_value(enc_sid) or ""
+            except Exception:
+                plain_sid = "?"
+        key = plain_sid or f"@row-{rid}"  # 无 session 的每条自成一组
+        if key not in groups_map:
+            groups_map[key] = {"sid": plain_sid, "count": 0, "records": []}
+            order.append(key)
+        g = groups_map[key]
+        g["count"] += 1
+        g["records"].append({
             "ts": ts,
             "tool": tool,
             "total": total,
             "waste": waste,
-            "cost": round(_cost(total, model), 6),
+            "cost": round(_cost(total, model, at=ts), 6),
             "model": model,
             "habits": [f.get("habit") for f in findings],
             "preview": _mask_preview(prev),
         })
-    return jsonify({"recent": out})
+
+    groups = [groups_map[k] for k in order]
+    groups.sort(key=lambda g: g["records"][-1]["ts"], reverse=True)  # 最新组在前
+    groups = groups[:limit]
+    for i, g in enumerate(groups, 1):
+        g["label"] = f"会话 {i}"
+        g["first"] = g["records"][0]["ts"].replace("T", " ")[:16]
+        g["last"] = g["records"][-1]["ts"].replace("T", " ")[:16]
+        sid = g["sid"]
+        g["sid_short"] = sid if len(sid) <= 12 else sid[:12] + "…"
+    return jsonify({"groups": groups})
 
 
 # ---------------------------------------------------------------------------

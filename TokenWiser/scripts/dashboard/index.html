@@ -96,6 +96,13 @@
   .tag.high { color: var(--bad); border-color: var(--bad); }
   .preview { color: var(--muted); font-family: Consolas, monospace; }
   .empty { color: var(--muted); text-align: center; padding: 24px; }
+  .group-head td {
+    background: var(--panel-2);
+    color: var(--accent);
+    font-weight: 600;
+    padding: 6px 10px;
+    letter-spacing: .2px;
+  }
 
   @media (max-width: 860px) {
     .charts { grid-template-columns: 1fr; }
@@ -107,7 +114,7 @@
 <header>
   <h1>TokenWiser 输入消耗面板</h1>
   <span class="badge">🔒 AES-256-GCM 加密存储</span>
-  <div class="meta">自动刷新 10s · 上次刷新 <span id="last-update">--:--:--</span></div>
+  <div class="meta"><span id="peak-badge"></span>自动刷新 10s · 上次刷新 <span id="last-update">--:--:--</span></div>
 </header>
 
 <section class="kpis" id="kpis"></section>
@@ -124,7 +131,7 @@
 </section>
 
 <section class="recent">
-  <h2>最近记录（输入预览已打码）</h2>
+  <h2>最近记录（按会话分组 · 预览显示前 30%）</h2>
   <table>
     <thead>
       <tr>
@@ -150,7 +157,7 @@ const HABIT_LABEL = {
 const HABIT_HIGH = ["secret_leak", "log_paste", "oversized_request"];
 
 const fmtInt = (n) => Number(n).toLocaleString("en-US");
-const fmtMoney = (x) => "$" + Number(x).toFixed(4);
+const fmtMoney = (x) => "¥" + Number(x).toFixed(4);
 const label = (h) => HABIT_LABEL[h] || h;
 
 let timelineChart = null, habitsChart = null;
@@ -191,7 +198,7 @@ function renderTimeline(d) {
       { type: "value", name: "token", nameTextStyle: { color: "#8b93a5" },
         axisLabel: { color: "#8b93a5", fontSize: 11 },
         splitLine: { lineStyle: { color: "#1d232d" } } },
-      { type: "value", name: "USD", nameTextStyle: { color: "#8b93a5" },
+      { type: "value", name: "CNY", nameTextStyle: { color: "#8b93a5" },
         axisLabel: { color: "#8b93a5", fontSize: 11 },
         splitLine: { show: false } },
     ],
@@ -224,24 +231,32 @@ function renderHabits(d) {
 
 function renderRecent(d) {
   const body = document.getElementById("recent-body");
-  if (!d.recent.length) {
+  const groups = d.groups || [];
+  if (!groups.length) {
     body.innerHTML = `<tr><td colspan="8" class="empty">暂无记录。先运行 demo_data.py 造演示数据，或正常使用后由 hook 自动写入。</td></tr>`;
     return;
   }
-  body.innerHTML = d.recent.map((r) => {
-    const tags = r.habits.map((h) =>
-      `<span class="tag${HABIT_HIGH.includes(h) ? " high" : ""}">${label(h)}</span>`).join("");
-    return `<tr>
-      <td>${r.ts.replace("T", " ")}</td>
-      <td>${r.tool}</td>
-      <td>${r.model || "-"}</td>
-      <td class="preview">${r.preview}</td>
-      <td class="num">${fmtInt(r.total)}</td>
-      <td class="num">${fmtInt(r.waste)}</td>
-      <td class="num">${fmtMoney(r.cost)}</td>
-      <td>${tags || '<span style="color:#8b93a5">-</span>'}</td>
-    </tr>`;
-  }).join("");
+  const rows = [];
+  groups.forEach((g) => {
+    const range = g.count > 1 ? `${g.first} ~ ${g.last}` : g.first;
+    const sid = g.sid_short && g.sid_short !== "-" ? g.sid_short : "未分组";
+    rows.push(`<tr class="group-head"><td colspan="8">${g.label} · ${g.count} 条 · ${range} · ${sid}</td></tr>`);
+    g.records.forEach((r) => {
+      const tags = r.habits.map((h) =>
+        `<span class="tag${HABIT_HIGH.includes(h) ? " high" : ""}">${label(h)}</span>`).join("");
+      rows.push(`<tr>
+        <td>${r.ts.replace("T", " ")}</td>
+        <td>${r.tool}</td>
+        <td>${r.model || "-"}</td>
+        <td class="preview">${r.preview}</td>
+        <td class="num">${fmtInt(r.total)}</td>
+        <td class="num">${fmtInt(r.waste)}</td>
+        <td class="num">${fmtMoney(r.cost)}</td>
+        <td>${tags || '<span style="color:#8b93a5">-</span>'}</td>
+      </tr>`);
+    });
+  });
+  body.innerHTML = rows.join("");
 }
 
 async function refresh() {
@@ -252,8 +267,10 @@ async function refresh() {
     fetch("/api/summary").then((x) => x.json()),
     fetch("/api/timeline?days=30").then((x) => x.json()),
     fetch("/api/habits").then((x) => x.json()),
-    fetch("/api/recent?limit=20").then((x) => x.json()),
+    fetch("/api/recent?limit=12").then((x) => x.json()),
   ]);
+  document.getElementById("peak-badge").textContent =
+    s.peak ? "⏰ 高峰时段 · " : "🌙 低谷时段 · ";
   renderSummary(s);
   renderTimeline(t);
   renderHabits(h);

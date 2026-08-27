@@ -9,6 +9,7 @@ TokenWiser 核心引擎
 """
 from __future__ import annotations
 
+import datetime
 import json
 import math
 import os
@@ -22,6 +23,9 @@ SEV_LOW = "low"
 SEV_MEDIUM = "medium"
 SEV_HIGH = "high"
 
+# 人民币汇率（USD→CNY）默认值。models.json 的 usd_to_cny 可覆盖，环境变量 TW_USD_TO_CNY 再覆盖。
+DEFAULT_USD_TO_CNY = 7.10
+
 DEFAULT_MODELS = {
     "default": {
         "input_per_million": 3.0,
@@ -30,6 +34,85 @@ DEFAULT_MODELS = {
         "note": "示例价格（每 1,000,000 token）。请按实际使用模型修改 models.json。",
     }
 }
+
+
+def usd_to_cny_rate(models=None):
+    """人民币汇率（USD→CNY）。
+
+    来源优先级：环境变量 TW_USD_TO_CNY > models.json 的 usd_to_cny > 默认 7.10。
+    模型单价仍按美元存储，所有成本与显示金额统一乘此汇率换算成人民币。
+    """
+    env = os.environ.get("TW_USD_TO_CNY")
+    if env:
+        try:
+            return float(env)
+        except ValueError:
+            pass
+    if models:
+        try:
+            return float(models.get("usd_to_cny", DEFAULT_USD_TO_CNY))
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_USD_TO_CNY
+
+
+def _is_peak_time(at=None):
+    """DeepSeek 峰谷判断（北京时间）。高峰 9-12 点与 14-18 点，周末全天低谷。
+
+    at 可为 datetime 或 ISO 字符串（记录时刻）；缺省取当前北京时间。
+    无峰谷配置的模型不受影响，此函数只服务于 peak/off_peak 定价。
+    """
+    if at is None:
+        at = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    elif isinstance(at, str):
+        try:
+            at = datetime.datetime.fromisoformat(at)
+        except ValueError:
+            return False
+    if at.weekday() >= 5:  # 周六/周日
+        return False
+    hour = at.hour
+    return 9 <= hour < 12 or 14 <= hour < 18
+
+
+def effective_price(model, models, cache_hit=False, at=None):
+    """计费用价格字典：按北京时间峰谷 + 缓存命中/未命中取价。
+
+    有 peak/off_peak 结构的模型（如 DeepSeek）按时段取价；
+    其余模型直接用 input/output_per_million，仅 cache_hit=True 且有
+    cache_hit_per_million 时改用缓存命中价。
+    """
+    price = _price_for(model, models)
+    peak, off = price.get("peak"), price.get("off_peak")
+    if peak and off:
+        cfg = peak if _is_peak_time(at) else off
+        out = dict(price)
+        key = "cache_hit_per_million" if cache_hit else "cache_miss_per_million"
+        out["input_per_million"] = cfg.get(key, price.get("input_per_million"))
+        out["output_per_million"] = cfg.get("output_per_million", price.get("output_per_million"))
+        return out
+    if cache_hit and "cache_hit_per_million" in price:
+        out = dict(price)
+        out["input_per_million"] = price["cache_hit_per_million"]
+        return out
+    return price
+
+
+def cost_rmb(tokens, price, models):
+    """按价格字典算 tokens 对应的人民币成本。currency=CNY 的模型不再乘汇率。"""
+    rate = usd_to_cny_rate(models)
+    per_million = price.get("input_per_million", 0)
+    if price.get("currency", "USD").upper() != "CNY":
+        per_million = per_million * rate
+    return tokens * per_million / 1_000_000
+
+
+def per_million_rmb(price, models, field):
+    """把单价字段换算成人民币显示值。CNY 模型原样返回。"""
+    value = price.get(field, 0)
+    if price.get("currency", "USD").upper() != "CNY":
+        value = value * usd_to_cny_rate(models)
+    return round(value, 4)
 
 
 # ---------------------------------------------------------------------------
@@ -375,22 +458,29 @@ _RULES = [
 # 统一入口
 # ---------------------------------------------------------------------------
 
-def analyze_text(text, model="default", models=None, encoding_name="o200k_base"):
+def analyze_text(text, model="default", models=None, encoding_name="auto", cache_hit=False):
     """
     核心入口：输入文本 → 结构化结果。
+
+    cache_hit: 输入是否按缓存命中价计费（默认 False 按未命中价）。
+    峰谷模型（如 DeepSeek）按当前北京时间判断高峰/低谷取价。
+    encoding_name: 分词器名；"auto"（默认）按模型的 tokenizer 字段自动选。
 
     返回:
       {
         "tokens": [{"text", "range"}, ...],
         "findings": [{"habit", "name", "severity", "waste_tokens", "detect", "advice"}, ...],
         "total_tokens": int,
-        "estimated_cost": float,
+        "estimated_cost": float,      # 人民币
         "waste_tokens": int,
-        "waste_cost": float,
+        "waste_cost": float,          # 人民币
         "model": str,
-        "currency": str,
+        "currency": str,              # 恒为 "CNY"
       }
     """
+    models = models or load_models()  # 统一加载一次，保证价格/汇率/分词器取同一份配置
+    if encoding_name in (None, "", "auto"):
+        encoding_name = _model_tokenizer(model, models)
     encoding = _load_encoding(encoding_name)
     tokens, total = tokenize(text, encoding)
 
@@ -409,9 +499,9 @@ def analyze_text(text, model="default", models=None, encoding_name="o200k_base")
         findings = [f for f in findings if f["habit"] != "missing_context"]
 
     waste = sum(f["waste_tokens"] for f in findings)
-    price = _price_for(model, models)
-    cost_input = total * price["input_per_million"] / 1_000_000
-    waste_cost = waste * price["input_per_million"] / 1_000_000
+    price = effective_price(model, models, cache_hit=cache_hit)
+    cost_input = cost_rmb(total, price, models)
+    waste_cost = cost_rmb(waste, price, models)
 
     return {
         "tokens": tokens,
@@ -421,7 +511,7 @@ def analyze_text(text, model="default", models=None, encoding_name="o200k_base")
         "waste_tokens": waste,
         "waste_cost": round(waste_cost, 6),
         "model": model,
-        "currency": price["currency"],
+        "currency": "CNY",
     }
 
 
@@ -474,12 +564,33 @@ def detect_model():
 
 
 def _price_for(model, models):
-    """取某模型的定价；未知模型回退到 default。支持前缀匹配（模型 id 带日期后缀）。"""
+    """取某模型的定价；未知模型回退到 default。支持前缀匹配（模型 id 带日期后缀）。
+
+    models 里除模型名外还有 usd_to_cny / note 等全局配置键，用结构判断跳过，
+    避免把它们当模型参与前缀匹配。
+    """
     if not models:
         models = load_models()
     if model in models:
         return models[model]
-    for key, val in models.items():
-        if key != "default" and model and model.startswith(key):
-            return val
+    # 前缀匹配：按键长倒序，避免 gpt-5.4 误配 gpt-5.4-mini、gemini-3.5-flash 误配 lite
+    candidates = sorted(
+        (k for k, v in models.items() if isinstance(v, dict) and "input_per_million" in v),
+        key=len,
+        reverse=True,
+    )
+    for key in candidates:
+        if model and model.startswith(key):
+            return models[key]
     return models.get("default", DEFAULT_MODELS["default"])
+
+
+def _model_tokenizer(model, models):
+    """按模型取分词器（models.json 的 tokenizer 字段），未配置回退 o200k_base。
+
+    分词器跟随模型走：OpenAI 用 o200k_base（精确），Claude 用 cl100k_base（代理），
+    DeepSeek/Qwen/Gemini 暂无 tiktoken 官方编码，先用 o200k_base 代理。
+    """
+    models = models or load_models()
+    enc = _price_for(model, models).get("tokenizer")
+    return enc if isinstance(enc, str) and enc else "o200k_base"

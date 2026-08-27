@@ -16,6 +16,10 @@ import crypto
 
 _DB_REL = os.path.join("..", "data", "habits.db")
 
+# 输入预览的存储上限（字符）。面板按'前 30%'变长显示，长消息需要存更多才有内容可截。
+# 只存开头一段，配合 AES-256-GCM 落盘加密，权衡"可识别"与"少留明文"。
+_PREVIEW_CHARS = 1000
+
 
 def db_path():
     """习惯库的绝对路径。"""
@@ -76,7 +80,7 @@ def record_check(result, meta=None, tool="unknown", ts=None):
                 ts,
                 tool,
                 crypto.encrypt_value(_clean(meta.get("session_id", "") or "")),
-                crypto.encrypt_value(_clean((meta.get("prompt", "") or "")[:100])),
+                crypto.encrypt_value(_clean((meta.get("prompt", "") or "")[:_PREVIEW_CHARS])),
                 result["total_tokens"],
                 result["waste_tokens"],
                 _clean(json.dumps(result["findings"], ensure_ascii=False)),

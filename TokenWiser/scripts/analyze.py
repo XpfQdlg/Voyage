@@ -28,7 +28,7 @@ for _stream in (sys.stdout, sys.stderr):
 if sys.stdin and hasattr(sys.stdin, "reconfigure"):
     sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 
-from core import _price_for, analyze_text, detect_model, load_models, strip_system_noise
+from core import _is_peak_time, analyze_text, detect_model, effective_price, load_models, per_million_rmb, strip_system_noise
 from store import record_check
 
 
@@ -51,17 +51,20 @@ def visualize_tokens(tokens, width=80):
     return "\n".join(line + "|" for line in lines)
 
 
-def print_text(result, models, model):
-    """人类可读输出。"""
-    price = _price_for(model, models)
-    print("模型: {} | {}/{} {}/M (in/out)".format(
+def print_text(result, models, model, cache_hit=False):
+    """人类可读输出。价格按模型币种换算成人民币显示；峰谷模型标注当前时段。"""
+    price = effective_price(model, models, cache_hit=cache_hit)
+    tag = ""
+    if price.get("peak"):
+        tag = " | 时段: " + ("高峰" if _is_peak_time() else "低谷")
+    print("模型: {}{} | ¥{}/M ¥{}/M (in/out)".format(
         model,
-        price.get("input_per_million", "?"),
-        price.get("output_per_million", "?"),
-        price.get("currency", ""),
+        tag,
+        per_million_rmb(price, models, "input_per_million"),
+        per_million_rmb(price, models, "output_per_million"),
     ))
-    print(f"输入: {result['total_tokens']} token, 约 {result['estimated_cost']:.4f} {result['currency']}")
-    print(f"浪费: {result['waste_tokens']} token, 约 {result['waste_cost']:.4f} {result['currency']}")
+    print(f"输入: {result['total_tokens']} token, 约 ¥{result['estimated_cost']:.4f}")
+    print(f"浪费: {result['waste_tokens']} token, 约 ¥{result['waste_cost']:.4f}")
     if not result["findings"]:
         print("未发现不良输入习惯。")
         return
@@ -76,7 +79,8 @@ def main():
     ap.add_argument("--text", default=None, help="直接传文本")
     ap.add_argument("--file", default=None, help="从文件读")
     ap.add_argument("--model", default=None, help="定价模型名（对应 models.json 的键）。缺省自动探测当前模型")
-    ap.add_argument("--tokenizer", default="o200k_base", help="tiktoken 编码名")
+    ap.add_argument("--tokenizer", default="auto", help="tiktoken 编码名；auto 按模型自动选")
+    ap.add_argument("--cache-hit", action="store_true", help="按缓存命中价计费（默认按未命中价）")
     ap.add_argument("--format", choices=["json", "text"], default="json")
     ap.add_argument("--tokens", action="store_true", help="只输出分词可视化视图（竖线为 token 边界）")
     ap.add_argument("--clean", action="store_true", help="先剥离系统注入内容（权限警告/命令消息等）再分析")
@@ -100,7 +104,10 @@ def main():
 
     models = load_models()
     model = args.model or detect_model() or "default"
-    result = analyze_text(text, model=model, models=models, encoding_name=args.tokenizer)
+    result = analyze_text(
+        text, model=model, models=models,
+        encoding_name=args.tokenizer, cache_hit=args.cache_hit,
+    )
     if args.record:
         record_check(result, {"prompt": text, "session_id": "", "model": model}, tool=args.tool)
 
@@ -110,7 +117,7 @@ def main():
         return
 
     if args.format == "text":
-        print_text(result, models, model)
+        print_text(result, models, model, cache_hit=args.cache_hit)
     else:
         print(json.dumps(result, ensure_ascii=False, indent=2))
 

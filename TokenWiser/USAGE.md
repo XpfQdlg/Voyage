@@ -100,7 +100,7 @@ python scripts/demo_data.py
 
 - KPI 卡：今日 / 本周 / 累计的 token 消耗、成本、浪费
 - 近 30 天消耗趋势图（柱：token，线：成本）
-- 习惯分布饼图、最近记录表（输入预览已打码为"前 2 字 + ……"）
+- 习惯分布饼图、最近记录表（按会话分组，预览显示前 30%）
 - hook 每次提交写库后，面板在 10 秒内自动更新
 
 依赖 `flask` 与 `cryptography`（本机已装）。只监听 `127.0.0.1`，不上网。
@@ -128,25 +128,35 @@ python scripts/demo_data.py
 
 ### 定价（models.json）
 
-单位：每 1,000,000 token 的货币数。`models.json` 已预置常见 Claude 模型（fable-5 / opus-5 / sonnet-5 / haiku-4-5），按模型自动计费：
+每个模型一条定价，按官方货币标价：美元模型（Claude/OpenAI/Gemini）标 `currency: USD`，成本与显示金额乘汇率 `usd_to_cny` 换算成**人民币（¥）**；人民币模型（DeepSeek/阿里云/智谱）标 `currency: CNY`，直接按 ¥ 计价不再乘汇率。可选 `cache_hit_per_million` 为缓存命中输入价：
 
 ```json
 {
-  "claude-fable-5": { "input_per_million": 10.0, "output_per_million": 50.0, "currency": "USD" },
-  "claude-opus-5":   { "input_per_million": 5.0,  "output_per_million": 25.0, "currency": "USD" },
-  "claude-sonnet-5": { "input_per_million": 3.0,  "output_per_million": 15.0, "currency": "USD" },
-  "claude-haiku-4-5":{ "input_per_million": 1.0,  "output_per_million": 5.0,  "currency": "USD" },
-  "default":         { "input_per_million": 3.0,  "output_per_million": 15.0, "currency": "USD" }
+  "usd_to_cny": 7.10,
+  "claude-fable-5": { "input_per_million": 10.0, "output_per_million": 50.0, "currency": "USD", "cache_hit_per_million": 1.0 },
+  "deepseek-v4-flash": {
+    "input_per_million": 3.0, "output_per_million": 9.0, "currency": "CNY",
+    "peak":    { "cache_hit_per_million": 0.1, "cache_miss_per_million": 3.0, "output_per_million": 9.0 },
+    "off_peak": { "cache_hit_per_million": 0.05, "cache_miss_per_million": 1.5, "output_per_million": 4.5 }
+  },
+  "default": { "input_per_million": 3.0, "output_per_million": 15.0, "currency": "USD" }
 }
 ```
 
-**自动定价**：缺省按 `ANTHROPIC_MODEL` → `CLAUDE_MODEL` → `~/.claude/settings.json` 的 `model` 探测当前模型，匹配价格表；未识别回退 `default`。也可用 `--model` 手动指定。
+**峰谷定价**（DeepSeek）：有 `peak`/`off_peak` 结构的模型按**北京时间**判断时段取价。高峰为工作日 9-12 点与 14-18 点，周末全天低谷。面板头部与 `analyze.py` 会标注当前时段。
 
-价格会随官方调整，改文件里的数值即可。也可用环境变量整体覆盖：
+**自动定价**：缺省按 `ANTHROPIC_MODEL` → `CLAUDE_MODEL` → `~/.claude/settings.json` 的 `model` 探测当前模型，前缀匹配价格表（如 `deepseek-v4-flash[1m]` 命中 `deepseek-v4-flash`）；未识别回退 `default`。也可用 `--model` 手动指定。默认按缓存未命中价计费，需按命中价算加 `--cache-hit`。
+
+模型单价随官方调整时改文件里的数值即可。汇率改 `usd_to_cny`，或用环境变量覆盖：
 
 ```bash
-export PROMPT_HABITS_MODELS='{"default":{"input_per_million":2,"output_per_million":10,"currency":"CNY"}}'
+export TW_USD_TO_CNY=7.2        # 覆盖人民币汇率
+export PROMPT_HABITS_MODELS='{"default":{"input_per_million":2,"output_per_million":10}}'   # 整体覆盖模型单价（仍按美元）
 ```
+
+> 口径说明：成本只按你的**输入** token 估算（工具定位是量输入习惯），不含 AI 回复的**输出** token；官网账单是输入+输出合计，因此本工具数字通常低于官网总花费。
+
+**分词器跟随模型**：`models.json` 每个模型带 `tokenizer` 字段，`analyze.py` 缺省 `--tokenizer auto`，按模型自动选。OpenAI GPT-5.x 用 `o200k_base`（精确）；Claude 用 `cl100k_base`（Anthropic 未公开 tiktoken 编码，此为最接近的代理）；DeepSeek/Qwen/Gemini 暂无 tiktoken 官方编码，用 `o200k_base` 代理。需要时可用 `--tokenizer cl100k_base` 等手动覆盖，或直接改 `models.json` 里对应模型的 `tokenizer` 字段。注意不同分词器对中文计数差异可达 1.5-2 倍，跨分词器比较数字没有意义。
 
 ### 检测阈值
 
@@ -181,7 +191,7 @@ export PROMPT_HABITS_MODELS='{"default":{"input_per_million":2,"output_per_milli
 
 - **零上传**：分析全部本地完成，不调用任何 API，输入不会发给任何服务器
 - **本地存储**：每次分析记录存本地 SQLite `data/habits.db`
-  - 只存输入前 100 字预览 + 检测结果（习惯类型、严重度、浪费 token）
+  - 只存输入前 1000 字预览 + 检测结果（习惯类型、严重度、浪费 token）；面板按前 30% 变长显示
   - 检测到的密钥只记类型（如 "API Key"），不存密钥本身
 - **落盘加密**：输入预览与 session 经 AES-256-GCM 加密后写入，密文格式 `enc:v1:...`
   - 密钥文件在 `~/.tokenwiser/tw_key`（项目目录之外，`.gitignore` 不会触碰）

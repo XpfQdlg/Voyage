@@ -31,7 +31,7 @@ python scripts/analyze.py --text "你好，请帮我优化一下这个" --format
 
 ## 实时消耗面板
 
-本地 Web 面板，实时展示 token 消耗、成本、习惯分布，每 10 秒自动刷新：
+本地 Web 面板，实时展示 token 消耗、成本、习惯分布，每 10 秒自动刷新。成本按人民币显示（汇率见 `models.json` 的 `usd_to_cny`），最近记录按会话分组：
 
 ```bash
 python scripts/server.py
@@ -52,7 +52,7 @@ TokenWiser/
 ├── USAGE.md            # 使用说明（跨平台）
 ├── rules_spec.md       # 检测规则规格
 ├── ROADMAP.md          # 后续调整清单
-├── models.json         # 定价表（可改）
+├── models.json         # 定价表 + 汇率（可改）
 └── scripts/
     ├── core.py         # 核心引擎（纯函数，零工具依赖）
     ├── analyze.py      # 便携命令行入口（stdin/--text → JSON）
@@ -94,7 +94,7 @@ python install.py --yes       # 依赖缺失时直接装
 ## 隐私
 
 - 分析全部本地完成，零上传
-- 输入预览（前 100 字）与 session 落盘前经 **AES-256-GCM 加密**，密钥存 `~/.tokenwiser/tw_key`（项目目录之外）
+- 输入预览（前 1000 字）与 session 落盘前经 **AES-256-GCM 加密**，密钥存 `~/.tokenwiser/tw_key`（项目目录之外）
 - 删除密钥 = 历史数据无法解密，请勿随意删除
 
 ## 可选依赖

@@ -23,7 +23,7 @@ for _stream in (sys.stdout, sys.stderr):
     if _stream and hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-from core import _price_for, load_models
+from core import cost_rmb, effective_price, load_models
 from store import fetch_records
 
 # ANSI 颜色
@@ -53,7 +53,7 @@ def main():
         for rec in rows:
             _rid, ts, _tool, _sid, _prev, total, waste, _fj, model = rec
             d = ts[:10]
-            cost = total * _price_for(model, models)["input_per_million"] / 1_000_000
+            cost = cost_rmb(total, effective_price(model, models, at=ts), models)
             if d >= monday_s:
                 week["tokens"] += total
                 week["cost"] += cost
@@ -76,8 +76,8 @@ def main():
 
         text = (
             f"今日 {_fmt_tokens(today['tokens'])} tok "
-            f"${today['cost']:.4f} (浪费 {_fmt_tokens(today['waste'])}) "
-            f"· 本周 {_fmt_tokens(week['tokens'])} ${week['cost']:.4f}"
+            f"¥{today['cost']:.4f} (浪费 {_fmt_tokens(today['waste'])}) "
+            f"· 本周 {_fmt_tokens(week['tokens'])} ¥{week['cost']:.4f}"
         )
         if today["count"] == 0 and week["count"] == 0:
             text = "今日无记录 · 输入后自动统计"
