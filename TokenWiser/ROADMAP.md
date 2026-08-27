@@ -8,6 +8,8 @@
 - ✅ **实时消耗面板**：`server.py` + `dashboard/`（Flask + 本地 echarts），KPI/趋势/习惯分布/最近记录，10s 轮询
 - ✅ **演示数据**：`demo_data.py` 生成近 30 天仿真记录，走真实检测管线
 - ✅ store 增 `model` 列：面板成本按记录当时模型定价计算
+- ✅ **底部状态栏**：`status.py` 读库自足（不依赖 stdin 协议），Claude Code 与 Gemini CLI 同款通用；Cursor/Windsurf 借扩展、Codex 待上游
+- ✅ **一键安装器**：`install.py` 下载即用——自动装 skill + 配 hook + 按检测到的 agent 配状态栏，幂等可重复运行
 
 ## 一、v1 收尾（近期）
 

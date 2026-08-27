@@ -44,10 +44,14 @@ python scripts/analyze.py --text "你好，请帮我看看这个报错" --clean 
 
 ### 1. Claude Code（skill + hook，全自动）
 
-**安装**：
+**一键安装（推荐）**：下载整个文件夹后运行 `python install.py`，自动完成
+skill 安装、hook 配置、状态栏配置，幂等可重复运行。
+
+**手动安装**：
 1. 把 `tokenwiser/` 整个文件夹放进 `~/.claude/skills/`
 2. 在 `~/.claude/settings.json` 里加 UserPromptSubmit hook（配置见下文）
-3. 重启 Claude Code
+3. 在 `~/.claude/settings.json` 里加 statusLine（配置见"底部状态栏"）
+4. 重启 Claude Code
 
 **使用**：
 - 主动：对 Claude 说"帮我分析这段输入的 token 分割"，或输入 `/tokenwiser`
@@ -100,6 +104,21 @@ python scripts/demo_data.py
 - hook 每次提交写库后，面板在 10 秒内自动更新
 
 依赖 `flask` 与 `cryptography`（本机已装）。只监听 `127.0.0.1`，不上网。
+
+### 3.6 底部状态栏（实时消耗）
+
+在终端底部一行实时显示今日/本周消耗，颜色随浪费占比变化（绿/黄/红）。
+`install.py` 自动按检测到的 agent 配置：
+
+| Agent | 支持 | 配置方式 |
+|---|---|---|
+| Claude Code | ✅ | `~/.claude/settings.json` 加 statusLine，自动 |
+| Gemini / Antigravity CLI | ✅ | `~/.gemini/antigravity-cli/settings.json` 加 statusLine，自动 |
+| Cursor / Windsurf | ⚠️ 借扩展 | 装 `leo-zhao.custom-status-bar` 扩展，`shell` 指向 `scripts/status.py`，`intervalSec: 5` |
+| Codex CLI | ⚠️ 待上游 | 只能选内置 `used-tokens` 段；自定义命令待 [#20043](https://github.com/openai/codex/issues/20043) |
+
+状态栏脚本 `scripts/status.py` 读习惯库自己算，不依赖各家 agent 传给 stdin 的
+字段，所以同一份脚本在支持命令式状态栏的 agent 上通用。
 
 ### 4. 浏览器 AI（规划中）
 

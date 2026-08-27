@@ -65,10 +65,31 @@ TokenWiser/
     └── dashboard/      # 面板前端（index.html + 本地 echarts）
 ```
 
-## 安装为 Claude Code skill
+## 安装（一键，任何 agent）
 
-将 `TokenWiser/` 目录放入 `~/.claude/skills/`（或项目 `.claude/skills/`）。
-需要自动触发时，把 `scripts/hook.py` 配为 UserPromptSubmit hook。
+下载整个文件夹，然后：
+
+```bash
+python install.py          # 自动装好：skill + hook + 状态栏
+python install.py --dry-run   # 先预览，不改动
+python install.py --yes       # 依赖缺失时直接装
+```
+
+`install.py` 自动检测你用的 agent，各取所需，幂等可重复运行：
+
+| Agent | 自动配置 |
+|---|---|
+| Claude Code | skill + 自动记录 hook + 底部状态栏（全功能） |
+| Gemini / Antigravity CLI | skill + 底部状态栏（同款 status.py） |
+| Cursor / Windsurf | skill + 提示装"自定义状态栏"扩展指向 status.py |
+| Codex CLI | skill + 提示内置 `used-tokens` 段（自定义命令待上游） |
+
+装完**重启对应 agent** 生效（配置在启动时读取）。
+
+### 手动安装（Claude Code）
+
+将 `TokenWiser/` 目录放入 `~/.claude/skills/`；需要自动触发时，把 `scripts/hook.py`
+配为 UserPromptSubmit hook，把 `scripts/status.py` 配为 statusLine。
 
 ## 隐私
 
