@@ -188,9 +188,9 @@ def _tokenize_estimate(text):
 # 检测规则
 # ---------------------------------------------------------------------------
 
-def _finding(habit, name, severity, waste, detect, advice):
-    """构造一条发现记录。"""
-    return {
+def _finding(habit, name, severity, waste, detect, advice, subtype=None):
+    """构造一条发现记录。subtype 为安全命中分类（credential/pii/contact），仅 secret_leak 使用。"""
+    finding = {
         "habit": habit,
         "name": name,
         "severity": severity,
@@ -198,6 +198,9 @@ def _finding(habit, name, severity, waste, detect, advice):
         "detect": detect,
         "advice": advice,
     }
+    if subtype:
+        finding["subtype"] = subtype
+    return finding
 
 
 # --- 1. 大段日志/代码粘贴 ------------------------------------------------
@@ -248,16 +251,65 @@ def rule_log_paste(text, tokens, total, encoding):
 
 
 # --- 2. 疑似敏感信息 ------------------------------------------------------
+#
+# 命中分类 subtype：
+#   credential  凭据类（API Key / Token / 私钥 / 连接串）——最高风险
+#   pii         个人隐私（身份证 / 手机号 / 银行卡）——高
+#   contact     联系方式（邮箱）——低，避免把日常贴邮箱当高危
+#
+# 需要校验位的模式（银行卡 Luhn、统一社会信用代码 GB32100）不放在 _SECRET_PATTERNS
+# 里直接匹配，而是单独用 finditer + 校验函数处理，防止把普通长数字误报成卡号。
 
 _SECRET_PATTERNS = [
-    (re.compile(r"sk-[A-Za-z0-9_-]{16,}"), "API Key"),
-    (re.compile(r"ghp_[A-Za-z0-9]{20,}"), "GitHub Token"),
-    (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS Access Key"),
-    (re.compile(r"Bearer [A-Za-z0-9._-]{20,}", re.I), "Bearer Token"),
-    (re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"), "手机号"),
-    (re.compile(r"\d{17}[\dXx](?!\d)"), "身份证号"),
-    (re.compile(r"[\w.+-]+@[\w-]+\.[A-Za-z]{2,}"), "邮箱"),
+    (re.compile(r"sk-[A-Za-z0-9_-]{16,}"), "API Key", "credential"),
+    (re.compile(r"ghp_[A-Za-z0-9]{20,}"), "GitHub Token", "credential"),
+    (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS Access Key", "credential"),
+    (re.compile(r"Bearer [A-Za-z0-9._-]{20,}", re.I), "Bearer Token", "credential"),
+    (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"), "私钥", "credential"),
+    (re.compile(r"\b(?:mysql|postgres(?:ql)?|mongodb|redis|amqp|jdbc|sqlserver)://\S+", re.I), "数据库连接串", "credential"),
+    (re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"), "手机号", "pii"),
+    (re.compile(r"\d{17}[\dXx](?!\d)"), "身份证号", "pii"),
+    (re.compile(r"[\w.+-]+@[\w-]+\.[A-Za-z]{2,}"), "邮箱", "contact"),
 ]
+
+# 银行卡：16-19 位数字，须过 Luhn 校验
+_CARD_NUMBER_RE = re.compile(r"\b\d{16,19}\b")
+# 统一社会信用代码：18 位字母数字，须过 GB32100 校验位
+_USCC_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Za-z]{18}(?![0-9A-Za-z])")
+
+# GB32100 校验用字符集与加权因子（已剔除 I、O、S、V、Z）
+_USCC_CHARS = "0123456789ABCDEFGHJKLMNPQRTUWXY"
+_USCC_WEIGHTS = [1, 3, 9, 27, 19, 26, 16, 17, 20, 29, 25, 13, 8, 24, 10, 30, 28]
+
+
+def _luhn_valid(digits):
+    """Luhn 算法校验（银行卡号）。返回 True/False。"""
+    if not digits.isdigit():
+        return False
+    total = 0
+    parity = len(digits) % 2
+    for i, ch in enumerate(digits):
+        d = int(ch)
+        if i % 2 == parity:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def _uscc_valid(code):
+    """GB32100 统一社会信用代码校验位校验。返回 True/False。"""
+    code = code.upper()
+    if len(code) != 18:
+        return False
+    if not all(c in _USCC_CHARS for c in code):
+        return False
+    try:
+        total = sum(_USCC_CHARS.index(code[i]) * _USCC_WEIGHTS[i] for i in range(17))
+    except ValueError:
+        return False
+    return _USCC_CHARS[(31 - total % 31) % 31] == code[17]
 
 
 def _entropy(s):
@@ -271,25 +323,79 @@ def _entropy(s):
     return -sum((c / length) * math.log2(c / length) for c in counts.values())
 
 
-def rule_secret_leak(text, tokens, total, encoding):
+def _card_hits(text):
+    """返回命中的银行卡号列表（须过 Luhn）。只标记一次，供 rule 与 redact 复用。"""
     hits = []
-    for pat, label in _SECRET_PATTERNS:
+    for m in _CARD_NUMBER_RE.finditer(text):
+        if _luhn_valid(m.group(0)):
+            hits.append(m)
+            break  # 同一段文本只需要报一次
+    return hits
+
+
+def _uscc_hits(text):
+    """返回命中的统一社会信用代码列表（须过校验位）。只标记一次。"""
+    hits = []
+    for m in _USCC_RE.finditer(text):
+        if _uscc_valid(m.group(0)):
+            hits.append(m)
+            break
+    return hits
+
+
+_SECRET_ADVICE = {
+    "credential": "检测到疑似密钥/凭据（API Key、Token、私钥、连接串等），发送给 AI 前请脱敏，避免凭据外泄。",
+    "pii": "检测到个人隐私信息（身份证/手机号/银行卡等），发送给 AI 前请脱敏，保护个人隐私。",
+    "contact": "检测到邮箱地址，若为个人联系方式请注意脱敏。",
+}
+
+
+def rule_secret_leak(text, tokens, total, encoding):
+    hits = []  # [(label, subtype), ...]
+    for pat, label, subtype in _SECRET_PATTERNS:
         if pat.search(text):
-            hits.append(label)
+            hits.append((label, subtype))
+    if _card_hits(text):
+        hits.append(("银行卡号", "pii"))
+    if _uscc_hits(text):
+        hits.append(("统一社会信用代码", "credential"))
     # 高熵片段：长且信息熵高，可能是随机生成的密钥。
     # 只对不含中文字符的片段检测——中文句子天然高熵，跳过可避免误报。
     cjk = re.compile(r"[一-鿿　-〿＀-￯]")
     for piece in re.split(r"\s+", text):
         if len(piece) >= 16 and not cjk.search(piece) and _entropy(piece) >= 4.5:
-            hits.append("高熵片段")
+            hits.append(("高熵片段", "credential"))
             break
     if not hits:
         return None
+    labels = sorted(set(label for label, _sub in hits))
+    # 严重度按最高类别取：credential/pii 为 high，仅 contact 为 medium
+    subtypes = {sub for _label, sub in hits}
+    subtype = "credential" if "credential" in subtypes else ("pii" if "pii" in subtypes else "contact")
+    severity = SEV_HIGH if subtype != "contact" else SEV_MEDIUM
     return _finding(
-        "secret_leak", "疑似敏感信息", SEV_HIGH, 0,
-        "、".join(sorted(set(hits))),
-        "检测到疑似密钥/手机号/身份证，发送给 AI 前请脱敏。",
+        "secret_leak", "疑似敏感信息", severity, 0,
+        "、".join(labels),
+        _SECRET_ADVICE[subtype],
+        subtype=subtype,
     )
+
+
+def redact_sensitive(text):
+    """把命中敏感模式的片段替换为占位符，供落库前打码。分析本身仍用原文。
+
+    覆盖 _SECRET_PATTERNS、银行卡（Luhn）、信用代码（校验位）。打码后不回显原值。
+    """
+    if not text:
+        return text
+    out = text
+    for pat, label, _subtype in _SECRET_PATTERNS:
+        out = pat.sub(f"[REDACTED:{label}]", out)
+    out = _CARD_NUMBER_RE.sub(
+        lambda m: "[REDACTED:银行卡号]" if _luhn_valid(m.group(0)) else m.group(0), out)
+    out = _USCC_RE.sub(
+        lambda m: "[REDACTED:统一社会信用代码]" if _uscc_valid(m.group(0)) else m.group(0), out)
+    return out
 
 
 # --- 3. 单条输入过大 -----------------------------------------------------
@@ -594,3 +700,48 @@ def _model_tokenizer(model, models):
     models = models or load_models()
     enc = _price_for(model, models).get("tokenizer")
     return enc if isinstance(enc, str) and enc else "o200k_base"
+
+
+# ---------------------------------------------------------------------------
+# 实时聚合（方向三：hook 行内提示 / status 状态栏共用，保证口径一致）
+# ---------------------------------------------------------------------------
+
+def aggregate_today_week(records, models=None):
+    """按 (id, ts, model, total_tokens, waste_tokens) 记录聚合今日与本周。
+
+    records 为 store.fetch_records_since 的返回（本周一起的行）。
+    成本按记录时刻与模型取价（峰谷/缓存价），与面板口径一致。
+    返回:
+      {"today": {"count","tokens","cost","waste","waste_cost"},
+       "week": {...}}
+    """
+    models = models or load_models()
+    today = datetime.date.today()
+    monday = (today - datetime.timedelta(days=today.weekday())).isoformat()
+    today_s = today.isoformat()
+    agg = {
+        "today": {"count": 0, "tokens": 0, "cost": 0.0, "waste": 0, "waste_cost": 0.0},
+        "week": {"count": 0, "tokens": 0, "cost": 0.0, "waste": 0, "waste_cost": 0.0},
+    }
+    for _rid, ts, model, total, waste in records:
+        d = ts[:10]
+        if d < monday:
+            continue
+        price = effective_price(model, models, at=ts)
+        cost = cost_rmb(total, price, models)
+        waste_cost = cost_rmb(waste, price, models)
+        agg["week"]["count"] += 1
+        agg["week"]["tokens"] += total
+        agg["week"]["cost"] += cost
+        agg["week"]["waste"] += waste
+        agg["week"]["waste_cost"] += waste_cost
+        if d == today_s:
+            agg["today"]["count"] += 1
+            agg["today"]["tokens"] += total
+            agg["today"]["cost"] += cost
+            agg["today"]["waste"] += waste
+            agg["today"]["waste_cost"] += waste_cost
+    for scope in ("today", "week"):
+        agg[scope]["cost"] = round(agg[scope]["cost"], 6)
+        agg[scope]["waste_cost"] = round(agg[scope]["waste_cost"], 6)
+    return agg

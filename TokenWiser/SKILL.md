@@ -3,7 +3,7 @@ name: tokenwiser
 description: 分析用户输入习惯、token 分割与浪费量。当用户输入包含大段粘贴的日志或代码、疑似密钥或敏感信息、超长文本，或用户要求分析自己的输入、查看 token 分割、了解优化建议时，运行 scripts/analyze.py 分析输入，报告 token 分割、检测到的坏习惯和量化代价。只建议，不替换用户内容。
 ---
 
-# tokenwiser 输入习惯教练
+# tokenwiser · 言镜
 
 检测用户向 AI 输入中的不良习惯，量化 token 与成本代价，给出建议。
 

@@ -182,6 +182,41 @@ def api_habits():
     return jsonify({"habits": habits})
 
 
+@app.route("/api/security")
+def api_security():
+    """近 N 天敏感信息命中统计（方向二）：每日命中数 + 类型分布。"""
+    days = request.args.get("days", 30, type=int)
+    days = max(1, min(days, 365))
+    rows = _records()
+    start = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
+    per_day = defaultdict(int)
+    by_type = defaultdict(int)
+    for rec in rows:
+        _rid, ts, _tool, _sid, _prev, _total, _waste, findings_json, _model = rec
+        if ts[:10] < start:
+            continue
+        try:
+            findings = json.loads(findings_json or "[]")
+        except Exception:
+            findings = []
+        for f in findings:
+            if f.get("habit") == "secret_leak":
+                per_day[ts[:10]] += 1
+                by_type[f.get("subtype", "unknown")] += 1
+    dates, hits = [], []
+    for i in range(days):
+        d = (datetime.date.today() - datetime.timedelta(days=days - 1 - i)).isoformat()
+        dates.append(d)
+        hits.append(per_day.get(d, 0))
+    return jsonify({
+        "days": days,
+        "dates": dates,
+        "hits": hits,
+        "total": sum(hits),
+        "by_type": dict(by_type),
+    })
+
+
 @app.route("/api/recent")
 def api_recent():
     """最近记录，按会话（session_id）分组返回。

@@ -118,15 +118,17 @@ _PROMPT_POOL = [
 ]
 
 
-def _pick_prompt():
-    total = sum(w for w, _ in _PROMPT_POOL)
+def _pick_prompt(pool=None):
+    """按权重取样一个 prompt 构造器。pool 缺省用模块级 _PROMPT_POOL。"""
+    pool = pool if pool is not None else _PROMPT_POOL
+    total = sum(w for w, _ in pool)
     r = random.uniform(0, total)
     acc = 0.0
-    for w, fn in _PROMPT_POOL:
+    for w, fn in pool:
         acc += w
         if r <= acc:
             return fn()
-    return _PROMPT_POOL[-1][1]()
+    return pool[-1][1]()
 
 
 # 模型按使用频率加权：haiku 日常、sonnet/fable 中等、opus 偶尔
@@ -155,6 +157,8 @@ def main():
     ap.add_argument("--days", type=int, default=30, help="覆盖最近几天")
     ap.add_argument("--per-day", type=int, default=10, help="每天几条")
     ap.add_argument("--seed", type=int, default=42, help="随机种子，保证可复现")
+    ap.add_argument("--security-weight", type=float, default=0.0,
+                    help="敏感信息记录占比（0-1，如 0.5），让面板安全卡片有内容")
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -162,11 +166,20 @@ def main():
     today = datetime.date.today()
     total = 0
 
+    # --security-weight: 重配权重，敏感信息记录占 sw，其余按原比例占 1-sw
+    pool = None
+    if args.security_weight > 0:
+        sw = min(max(args.security_weight, 0.0), 1.0)
+        others = [(w, fn) for w, fn in _PROMPT_POOL if fn is not _secret_prompt]
+        other_total = sum(w for w, _ in others)
+        pool = [(w / other_total * (1 - sw), fn) for w, fn in others]
+        pool.append((sw, _secret_prompt))
+
     # 从最远的天开始铺，日期递增
     for day_offset in range(args.days - 1, -1, -1):
         day = today - datetime.timedelta(days=day_offset)
         for i in range(args.per_day):
-            prompt = _pick_prompt()
+            prompt = _pick_prompt(pool)
             model = _pick_model()
             result = analyze_text(prompt, model=model, models=models)
             ts = day.strftime("%Y-%m-%dT") + f"{random.randint(9, 23):02d}:{random.randint(0, 59):02d}:{random.randint(0, 59):02d}"

@@ -119,7 +119,7 @@ def install_skill(dry_run, use_link):
 
 def ensure_hook(cfg, scripts_dir):
     """Claude Code 的 UserPromptSubmit hook，幂等。"""
-    cmd = "python " + wsl_path(os.path.join(scripts_dir, "hook.py"))
+    cmd = sys.executable + " " + wsl_path(os.path.join(scripts_dir, "hook.py"))
     hooks = cfg.setdefault("hooks", {})
     entries = hooks.setdefault("UserPromptSubmit", [])
     for entry in entries:
@@ -133,7 +133,7 @@ def ensure_hook(cfg, scripts_dir):
 
 def ensure_statusline(cfg, scripts_dir, refresh_interval=None):
     """给任意 agent 写 statusLine（协议相同：command -> stdout 文本）。"""
-    cmd = "python " + wsl_path(os.path.join(scripts_dir, "status.py"))
+    cmd = sys.executable + " " + wsl_path(os.path.join(scripts_dir, "status.py"))
     cur = cfg.get("statusLine")
     if cur:
         c = str(cur.get("command", ""))
@@ -164,7 +164,8 @@ def config_gemini(scripts_dir):
 
 def print_guide_cursor(scripts_dir):
     print("""
-· Cursor 检测到：状态栏需借 VS Code 扩展。步骤：
+· Cursor 检测到：状态栏为可选增强（核心实时显示走 hook 行内提示与本地面板，无需必配）。如需要：
+  状态栏需借 VS Code 扩展。步骤：
   1) 装扩展 "自定义状态栏" (leo-zhao.custom-status-bar)
   2) 在 ~/.cursor/User/settings.json 加:
      "customStatusBar.items": [{
@@ -178,7 +179,8 @@ def print_guide_cursor(scripts_dir):
 
 def print_guide_windsurf(scripts_dir):
     print("""
-· Windsurf 检测到：状态栏需借 VS Code 扩展。步骤：
+· Windsurf 检测到：状态栏为可选增强（核心实时显示走 hook 行内提示与本地面板，无需必配）。如需要：
+  状态栏需借 VS Code 扩展。步骤：
   1) 装扩展 "自定义状态栏" (leo-zhao.custom-status-bar)
   2) 在 ~/.codeium/windsurf/User/settings.json 加:
      "customStatusBar.items": [{
@@ -244,9 +246,9 @@ def main():
         sys.exit(1)
 
     if args.dry_run:
-        cmd = "python " + wsl_path(os.path.join(scripts_dir, "status.py"))
+        cmd = sys.executable + " " + wsl_path(os.path.join(scripts_dir, "status.py"))
         print(f"· [dry-run] 将写入 statusLine 命令: {cmd}")
-        print("· [dry-run] Claude Code 还会写入 hook 命令: python "
+        print("· [dry-run] Claude Code 还会写入 hook 命令: " + sys.executable + " "
               + wsl_path(os.path.join(scripts_dir, "hook.py")))
         print("（dry-run 结束，未做任何改动）")
         return

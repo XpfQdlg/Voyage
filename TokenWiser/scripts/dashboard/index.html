@@ -130,6 +130,17 @@
   </div>
 </section>
 
+<section class="charts">
+  <div class="chart-box">
+    <h2>近 30 天敏感信息命中（方向二）</h2>
+    <div id="security" class="chart" style="height:220px"></div>
+  </div>
+  <div class="chart-box">
+    <h2>命中类型</h2>
+    <div id="security-types" style="min-height:220px"></div>
+  </div>
+</section>
+
 <section class="recent">
   <h2>最近记录（按会话分组 · 预览显示前 30%）</h2>
   <table>
@@ -144,7 +155,6 @@
 </section>
 
 <script src="/static/echarts.min.js"></script>
-<script>window.echarts || document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"><\/script>')</script>
 <script>
 const HABIT_LABEL = {
   log_paste: "日志粘贴",
@@ -155,12 +165,13 @@ const HABIT_LABEL = {
   vague_instruction: "指令模糊",
 };
 const HABIT_HIGH = ["secret_leak", "log_paste", "oversized_request"];
+const SEC_TYPE = { credential: "凭据", pii: "隐私", contact: "联系", unknown: "未知" };
 
 const fmtInt = (n) => Number(n).toLocaleString("en-US");
 const fmtMoney = (x) => "¥" + Number(x).toFixed(4);
 const label = (h) => HABIT_LABEL[h] || h;
 
-let timelineChart = null, habitsChart = null;
+let timelineChart = null, habitsChart = null, securityChart = null;
 
 function kpiCard(labelText, valueText, sub, waste) {
   return `<div class="kpi${waste ? " waste" : ""}">
@@ -259,14 +270,51 @@ function renderRecent(d) {
   body.innerHTML = rows.join("");
 }
 
+function renderSecurity(d) {
+  if (!securityChart) {
+    securityChart = echarts.init(document.getElementById("security"));
+  }
+  securityChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: { trigger: "axis" },
+    grid: { left: 40, right: 20, top: 20, bottom: 40 },
+    xAxis: {
+      type: "category", data: d.dates,
+      axisLabel: { color: "#8b93a5", fontSize: 10, interval: 4 },
+      axisLine: { lineStyle: { color: "#2a3140" } },
+    },
+    yAxis: {
+      type: "value", minInterval: 1,
+      axisLabel: { color: "#8b93a5", fontSize: 11 },
+      splitLine: { lineStyle: { color: "#1d232d" } },
+    },
+    series: [{ name: "命中", type: "bar", data: d.hits,
+      itemStyle: { color: "#ff6b6b", borderRadius: [2, 2, 0, 0] }, barMaxWidth: 14 }],
+  }, { notMerge: true });
+  const typeEl = document.getElementById("security-types");
+  const entries = Object.entries(d.by_type || {});
+  if (!entries.length) {
+    typeEl.innerHTML = '<div class="empty" style="padding:40px 0">近 30 天无敏感信息命中</div>';
+    return;
+  }
+  typeEl.innerHTML = entries.map(([k, v]) =>
+    `<div style="display:flex;justify-content:space-between;padding:10px 4px;border-bottom:1px solid #2a3140;font-size:13px">
+       <span style="color:#8b93a5">${SEC_TYPE[k] || k}</span><span>${v} 次</span>
+     </div>`).join("") +
+    `<div style="display:flex;justify-content:space-between;padding:12px 4px;font-weight:600">
+       <span>近 30 天合计</span><span style="color:#ff6b6b">${d.total} 次</span>
+     </div>`;
+}
+
 async function refresh() {
   const now = new Date();
   document.getElementById("last-update").textContent =
     now.toTimeString().slice(0, 8);
-  const [s, t, h, r] = await Promise.all([
+  const [s, t, h, sec, r] = await Promise.all([
     fetch("/api/summary").then((x) => x.json()),
     fetch("/api/timeline?days=30").then((x) => x.json()),
     fetch("/api/habits").then((x) => x.json()),
+    fetch("/api/security?days=30").then((x) => x.json()),
     fetch("/api/recent?limit=12").then((x) => x.json()),
   ]);
   document.getElementById("peak-badge").textContent =
@@ -274,6 +322,7 @@ async function refresh() {
   renderSummary(s);
   renderTimeline(t);
   renderHabits(h);
+  renderSecurity(sec);
   renderRecent(r);
 }
 

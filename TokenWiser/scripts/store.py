@@ -13,6 +13,7 @@ import sqlite3
 import time
 
 import crypto
+from core import redact_sensitive
 
 _DB_REL = os.path.join("..", "data", "habits.db")
 
@@ -63,14 +64,28 @@ def _clean(value):
     return value.encode("utf-8", errors="replace").decode("utf-8")
 
 
+def _sanitize_flag():
+    """TW_SANITIZE_ON_SECRET：命中敏感信息时落库 preview 打码（默认开启）。"""
+    v = os.environ.get("TW_SANITIZE_ON_SECRET")
+    if v is None:
+        return True
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
 def record_check(result, meta=None, tool="unknown", ts=None):
     """写入一次分析结果。meta 可带 prompt / session_id 等来源信息。
 
     敏感字段（prompt 预览 / session_id）加密后入库；ts 可自定义（演示数据用）。
+    命中敏感信息且 TW_SANITIZE_ON_SECRET 开启时，preview 在落库前打码
+    （[REDACTED:类型]），分析结果本身不受影响。所有调用方统一走这里。
     """
     meta = meta or {}
     if ts is None:
         ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+    prompt = meta.get("prompt", "") or ""
+    if any(f.get("habit") == "secret_leak" for f in result.get("findings", [])):
+        if _sanitize_flag():
+            prompt = redact_sensitive(prompt)
     conn = _conn()
     try:
         conn.execute(
@@ -80,7 +95,7 @@ def record_check(result, meta=None, tool="unknown", ts=None):
                 ts,
                 tool,
                 crypto.encrypt_value(_clean(meta.get("session_id", "") or "")),
-                crypto.encrypt_value(_clean((meta.get("prompt", "") or "")[:_PREVIEW_CHARS])),
+                crypto.encrypt_value(_clean(prompt[:_PREVIEW_CHARS])),
                 result["total_tokens"],
                 result["waste_tokens"],
                 _clean(json.dumps(result["findings"], ensure_ascii=False)),
@@ -147,6 +162,26 @@ def fetch_records():
         return conn.execute(
             "SELECT id, ts, tool, session_id, input_preview, total_tokens, waste_tokens, findings_json, model "
             "FROM checks ORDER BY ts"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def fetch_records_since(since_ts):
+    """读取 ts >= since_ts 的记录，只取实时聚合需要的列（id, ts, model, total, waste）。
+
+    供 status.py 状态栏与 hook 行内提示使用，避免每次全表拉取后 Python 过滤。
+    since_ts 传 ISO 日期或时间字符串，如本周一的 "2026-08-24"。
+    """
+    path = db_path()
+    if not os.path.exists(path):
+        return []
+    conn = _conn()
+    try:
+        return conn.execute(
+            "SELECT id, ts, model, total_tokens, waste_tokens FROM checks "
+            "WHERE ts >= ? ORDER BY ts",
+            (since_ts,),
         ).fetchall()
     finally:
         conn.close()

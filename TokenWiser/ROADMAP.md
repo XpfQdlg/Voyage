@@ -11,6 +11,16 @@
 - ✅ **底部状态栏**：`status.py` 读库自足（不依赖 stdin 协议），Claude Code 与 Gemini CLI 同款通用；Cursor/Windsurf 借扩展、Codex 待上游
 - ✅ **一键安装器**：`install.py` 下载即用——自动装 skill + 配 hook + 按检测到的 agent 配状态栏，幂等可重复运行
 
+## v2 已交付（2026-08-31，方向二 + 方向三）
+
+- ✅ **敏感信息规则增强**：按 subtype 分类（凭据/隐私/联系）；新增银行卡（Luhn 校验）、统一社会信用代码（GB32100 校验位）、数据库连接串、PEM 私钥；邮箱降为 medium
+- ✅ **敏感片段打码落库**：`core.redact_sensitive()`，预览落库前打码，分析仍用原文；`store.record_check` 统一处理
+- ✅ **hook 安全动作**：`TW_SECRET_ACTION=warn/block`
+- ✅ **实时显示兼容化**：hook 行内提示（`TW_HINT_INTERVAL` 控频，主机制）；`status.py` 改按日期增量聚合 + `--short`；`install.py` 用 `sys.executable`，Cursor/Windsurf/Codex 状态栏降级为可选
+- ✅ **面板安全卡片**：`/api/security` + dashboard 展示命中次数与类型分布
+- ✅ **演示数据 `--security-weight`**：调高敏感信息记录占比
+- ✅ **自动化测试**：`scripts/test_plan.py`（17 项全过）
+
 ## 一、v1 收尾（近期）
 
 1. ⬜ **同步 rules_spec.md 与代码阈值**
@@ -23,7 +33,7 @@
 
 ## 二、v1.5 / v2（中期）
 
-1. ⬜ **自动化测试套件**（pytest，防加规则改坏已有功能）
+1. ✅ **自动化测试套件**（2026-08-31：`scripts/test_plan.py`，17 项覆盖规则精度/redact/聚合/hook/status/install）
 2. ⬜ **浏览器扩展适配器**（覆盖 ChatGPT / Claude.ai / Gemini / Kimi / 豆包 等网页 AI）
 3. ⬜ **会话历史分析**：读 `~/.claude/projects/` 转录，直接出习惯周报（复用早期"会话审计"方向的数据源）
 4. ⬜ **更多检测规则**
@@ -45,7 +55,7 @@
 
 - Windows 控制台 GBK 编码已修（stdin reconfigure + 入库清洗），但极端环境仍需实测
 - hook 是同步的，每次提交增加毫秒级延迟；若明显变慢需改为后台进程写入
-- `secret_leak` 对邮箱匹配较宽松，可能误报，实战后收紧
+- `secret_leak` 邮箱已降为 medium（v2）；凭据/隐私仍为 high，实战后按真实数据继续收紧阈值
 - `missing_context` 与 `vague_instruction` 的 waste=300 是估算值，非实测
 
 ## 五、规则阈值现状速查（2026-08-26）
@@ -53,7 +63,7 @@
 | 规则 | 触发条件（代码实际值） | 严重度 |
 |---|---|---|
 | log_paste | 行数 ≥10 且日志占比 ≥50%；waste ≥200 或占比 ≥80% → high | high/medium |
-| secret_leak | 任意命中 | high（无条件） |
+| secret_leak | credential/pii → high；contact（邮箱）→ medium；银行卡须过 Luhn、信用代码须过 GB32100 校验位 | high/medium |
 | oversized_request | total ≥3000；≥6000 → high | high/medium |
 | redundant_opener | 开场白 ≥4 token | medium |
 | missing_context | 文本 ≥30 字、total <3000、非日志主导、无格式关键词 | medium |

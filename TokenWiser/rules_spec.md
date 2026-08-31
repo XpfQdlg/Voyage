@@ -2,7 +2,7 @@
 
 ## 产品与原则
 
-- 输入习惯教练：检测用户向 AI 输入中的不良习惯，量化 token 与成本代价，给出建议
+- 言镜（TokenWiser）：检测用户向 AI 输入中的不良习惯，量化 token 与成本代价，给出建议
 - 只建议，不替换。工具永不改写用户内容
 - 本地检测，零 API 调用。tiktoken 是唯一可选依赖，不装则降级为字符估算
 
@@ -38,12 +38,20 @@ waste_cost = waste_tokens × input_per_million / 1,000,000
 - 代价：waste_tokens = 所有日志行的 token 数
 - 建议："只保留报错/关键那几行，别贴整个日志，一般 5-10 行就够。"
 
-### 2. secret_leak 疑似敏感信息
+### 2. secret_leak 疑似敏感信息（v2 增强，按 subtype 分类）
 
-- 检测：API key 前缀（`sk-`、`ghp_`、`AKIA`、`Bearer`）、手机号、身份证号、邮箱、高熵片段（≥ 16 字符且熵 ≥ 4.5）
-- 严重度：命中即 high（安全优先，唯一无条件提示的规则）
+- 检测分类：
+  - **credential（凭据）**：`sk-`、`ghp_`、`AKIA`、`Bearer`、PEM 私钥块、数据库连接串（mysql/postgres(ql)/mongodb/redis/amqp/jdbc/sqlserver://）、统一社会信用代码（须过 GB32100 校验位）、高熵片段（≥16 字符且熵 ≥4.5）
+  - **pii（个人隐私）**：手机号、身份证号、银行卡号（16-19 位数字且须过 Luhn 校验）
+  - **contact（联系方式）**：邮箱
+- 严重度：credential/pii → high；仅 contact（邮箱）→ **medium**。v2 行为变更：邮箱原为无条件 high，降为 medium，避免把日常贴邮箱当高危事件
+- 校验：银行卡过 Luhn、信用代码过 GB32100 校验位，普通长数字不会误报（订单号等）
 - 代价：waste = 0（这是风险，不是 token 浪费）
-- 建议："检测到疑似密钥/手机号/身份证，发送给 AI 前请脱敏。"
+- 建议（按 subtype）：
+  - credential："检测到疑似密钥/凭据（API Key、Token、私钥、连接串等），发送给 AI 前请脱敏，避免凭据外泄。"
+  - pii："检测到个人隐私信息（身份证/手机号/银行卡等），发送给 AI 前请脱敏，保护个人隐私。"
+  - contact："检测到邮箱地址，若为个人联系方式请注意脱敏。"
+- finding 附加字段：`subtype`（credential/pii/contact），向后兼容（旧数据无此字段）
 
 ### 3. oversized_request 单条输入过大
 
@@ -94,8 +102,32 @@ hook 分析前调用 `strip_system_noise()` 剥掉注入的系统内容，避免
 | 触发场景 | 条件 |
 |---|---|
 | 日志粘贴超标 | waste ≥ 200 或占比 ≥ 80% |
-| 疑似密钥 | 任意命中 |
+| 敏感信息（凭据/隐私） | credential/pii 命中（high）；contact 邮箱仅 medium，不主动提示 |
 | 单条超 6000 token | total ≥ 6000 |
+
+## 敏感信息打码落库（v2）
+
+命中 secret_leak 且 `TW_SANITIZE_ON_SECRET`（默认 1）开启时，落库的 input_preview
+在加密前把敏感片段替换为 `[REDACTED:<类型>]`（`core.redact_sensitive()`）。
+分析仍用原文；打码只影响存储的预览。stderr 提示、findings_json、面板均不出现敏感值本身。
+
+## 实时显示（方向三）
+
+主机制不依赖 agent 私有能力：
+
+- **hook 行内提示（主机制）**：每次输入后按 `TW_HINT_INTERVAL`（默认 1800 秒，0=关闭）控频，
+  在 stderr 输出"今日 X tok / ¥Y（浪费 Z%）"。口径与 status.py 一致（`core.aggregate_today_week`）。
+- **状态栏 `status.py`（可选增强）**：仅原生支持 statusLine 的 agent（Claude Code / Gemini）自动配置；
+  Cursor/Windsurf/Codex 不再强制。`--short` 输出单行短文本供 shell prompt。
+- **面板 `server.py`（零 agent 依赖）**：浏览器 10s 轮询；新增 `GET /api/security` 安全事件统计。
+
+## 环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `TW_SECRET_ACTION` | warn | secret_leak 命中 high 时的动作：warn（exit 1 警告）或 block（exit 2 意图阻断，语义以实测为准） |
+| `TW_SANITIZE_ON_SECRET` | 1 | 命中敏感信息时落库 preview 打码 |
+| `TW_HINT_INTERVAL` | 1800 | hook 行内提示控频（秒），0=关闭 |
 
 ## 备注
 

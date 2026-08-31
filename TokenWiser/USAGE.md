@@ -8,7 +8,7 @@
 
 覆盖的习惯：
 - 大段粘贴日志/代码（只留报错那几行就够了）
-- 输入中带疑似密钥、手机号、身份证
+- 输入中带敏感信息：密钥/Token/私钥/连接串（凭据类）、身份证/手机号/银行卡（隐私类）、邮箱（联系方式）
 - 单条输入过长（该拆成小步）
 - 冗余开场白（"你是一个AI助手"这类废话）
 - 缺上下文/输出格式
@@ -101,21 +101,23 @@ python scripts/demo_data.py
 - KPI 卡：今日 / 本周 / 累计的 token 消耗、成本、浪费
 - 近 30 天消耗趋势图（柱：token，线：成本）
 - 习惯分布饼图、最近记录表（按会话分组，预览显示前 30%）
+- 安全事件卡片：近 30 天敏感信息命中次数与类型分布（方向二）
 - hook 每次提交写库后，面板在 10 秒内自动更新
 
 依赖 `flask` 与 `cryptography`（本机已装）。只监听 `127.0.0.1`，不上网。
 
-### 3.6 底部状态栏（实时消耗）
+### 3.6 底部状态栏（可选增强）
 
 在终端底部一行实时显示今日/本周消耗，颜色随浪费占比变化（绿/黄/红）。
+**注意：状态栏是可选增强。核心实时显示走 hook 行内提示与本地面板，二者不依赖 agent 私有能力。**
 `install.py` 自动按检测到的 agent 配置：
 
 | Agent | 支持 | 配置方式 |
 |---|---|---|
 | Claude Code | ✅ | `~/.claude/settings.json` 加 statusLine，自动 |
 | Gemini / Antigravity CLI | ✅ | `~/.gemini/antigravity-cli/settings.json` 加 statusLine，自动 |
-| Cursor / Windsurf | ⚠️ 借扩展 | 装 `leo-zhao.custom-status-bar` 扩展，`shell` 指向 `scripts/status.py`，`intervalSec: 5` |
-| Codex CLI | ⚠️ 待上游 | 只能选内置 `used-tokens` 段；自定义命令待 [#20043](https://github.com/openai/codex/issues/20043) |
+| Cursor / Windsurf | ⚠️ 可选 | 需装 `leo-zhao.custom-status-bar` 扩展，`shell` 指向 `scripts/status.py`；不装不影响核心功能 |
+| Codex CLI | ⚠️ 可选 | 不支持自定义 status 命令，只可用内置 `used-tokens` 段；自定义待 [#20043](https://github.com/openai/codex/issues/20043) |
 
 状态栏脚本 `scripts/status.py` 读习惯库自己算，不依赖各家 agent 传给 stdin 的
 字段，所以同一份脚本在支持命令式状态栏的 agent 上通用。
@@ -184,7 +186,10 @@ export PROMPT_HABITS_MODELS='{"default":{"input_per_million":2,"output_per_milli
 
 ### 行为开关
 
-- 被动提示只在严重度 high 时触发（密钥、日志超标、超长）。默认静默记录
+- 被动提示只在严重度 high 时触发（凭据/隐私、日志超标、超长）。默认静默记录
+- 敏感信息动作：`TW_SECRET_ACTION=block` 时，命中凭据/隐私改为阻断（exit 2，语义以实测为准）；默认 `warn` 只警告
+- 敏感片段打码：`TW_SANITIZE_ON_SECRET=0` 关闭落库前打码（默认开启）
+- hook 行内提示：`TW_HINT_INTERVAL` 控频（默认 1800 秒），设 0 关闭
 - 想改触发严格程度，调 `core.py` 里的严重度阈值
 
 ## 数据与隐私
@@ -193,6 +198,7 @@ export PROMPT_HABITS_MODELS='{"default":{"input_per_million":2,"output_per_milli
 - **本地存储**：每次分析记录存本地 SQLite `data/habits.db`
   - 只存输入前 1000 字预览 + 检测结果（习惯类型、严重度、浪费 token）；面板按前 30% 变长显示
   - 检测到的密钥只记类型（如 "API Key"），不存密钥本身
+  - 命中敏感信息时，预览里的敏感片段在落库前打码为 `[REDACTED:类型]`（`TW_SANITIZE_ON_SECRET=0` 关闭）
 - **落盘加密**：输入预览与 session 经 AES-256-GCM 加密后写入，密文格式 `enc:v1:...`
   - 密钥文件在 `~/.tokenwiser/tw_key`（项目目录之外，`.gitignore` 不会触碰）
   - 需要 `cryptography`（`pip install cryptography`）。未安装时降级为明文写入

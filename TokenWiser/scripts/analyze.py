@@ -69,7 +69,8 @@ def print_text(result, models, model, cache_hit=False):
         print("未发现不良输入习惯。")
         return
     for f in result["findings"]:
-        print(f"\n[{f['severity']}] {f['name']}")
+        tag = f"[{f['subtype']}] " if f.get("subtype") else ""
+        print(f"\n[{f['severity']}] {tag}{f['name']}")
         print(f"  检测: {f['detect']}")
         print(f"  建议: {f['advice']}")
 
@@ -109,6 +110,7 @@ def main():
         encoding_name=args.tokenizer, cache_hit=args.cache_hit,
     )
     if args.record:
+        # preview 打码由 store.record_check 统一处理（命中敏感信息且未关闭时）
         record_check(result, {"prompt": text, "session_id": "", "model": model}, tool=args.tool)
 
     if args.tokens:
